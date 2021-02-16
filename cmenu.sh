@@ -1,17 +1,28 @@
 #!/bin/bash
 
+INDATA=()
+
 # read piped input
-STDIN=()
-while IFS='\n' read -r INLINE; 
-do
-	STDIN+=("$INLINE")
-done
+if test ! -t 0;
+then
+	while IFS='\n' read -r INLINE; 
+	do
+		[[ ! -z $INLINE ]] && INDATA+=("$INLINE")
+	done
+fi
 
 # read command line input
-for ARG in $@
+for ARG in "$@"
 do
-	STDIN+=("$ARG")
+	[[ ! -z $ARG ]] && INDATA+=("$ARG")
 done
+
+# exit if no data provided
+if [[ -z $INDATA ]];
+then
+	echo ''
+	exit 1
+fi
 
 # distinguish whitespace characters for user input
 IFS=''
@@ -41,7 +52,7 @@ do
 	NUM_ITEMS=0    # total items in on-screen menu
 
 	# loop through each parameter
-	for ITEM in "${STDIN[@]}"
+	for ITEM in "${INDATA[@]}"
 	do	
 		let 'CURRENT_IDX+=1'
 		# check if current parameter matches the search string
