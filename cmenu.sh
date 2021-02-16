@@ -1,5 +1,18 @@
 #!/bin/bash
 
+# read piped input
+STDIN=()
+while IFS='\n' read -r INLINE; 
+do
+	STDIN+=("$INLINE")
+done
+
+# read command line input
+for ARG in $@
+do
+	STDIN+=("$ARG")
+done
+
 # distinguish whitespace characters for user input
 IFS=''
 
@@ -28,7 +41,7 @@ do
 	NUM_ITEMS=0    # total items in on-screen menu
 
 	# loop through each parameter
-	for ITEM in "$@"
+	for ITEM in "${STDIN[@]}"
 	do	
 		let 'CURRENT_IDX+=1'
 		# check if current parameter matches the search string
@@ -98,26 +111,26 @@ do
 	fi
 	
 	# print user-typed text for searching list
-	prs '\r%s\e[K' $SEARCH_TEXT
+	prs '\r:%s\e[K' $SEARCH_TEXT
 
 	# wait for user to hit a key
-	read -sn1 key
-
+	read -sn1 key </dev/tty
+	
 	case "$key" in
 		# special keys will send multiple characters, beginning with this sequence
 		($'\033')
 			# read the remaining characters for a special key
-			read -t.001 -sn2 arrow
+			read -t.001 -sn2 arrow </dev/tty
 			case "$arrow" in
 				# up arrow
-				('[A')
+				('[A'|'OA')
 					if [[ $MENU_PREV -gt 0 ]]; 
 					then
 						SELECTED_IDX=$MENU_PREV
 					fi
 				;;
 				# down arrow
-				('[B')
+				('[B'|'OB')
 					if [[ $MENU_NEXT -gt 0 ]];  # down
 					then
 						SELECTED_IDX=$MENU_NEXT
@@ -127,7 +140,7 @@ do
 				('')
 					loop=false
 					SELECTED_ITEM=''
-				;;
+				;;			
 			esac
 		;;
 		# Backspace
