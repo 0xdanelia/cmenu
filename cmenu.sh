@@ -5,16 +5,16 @@ INDATA=()
 # read piped input
 if test ! -t 0;
 then
-	while IFS='\n' read -r INLINE; 
+	while read -r INLINE; 
 	do
-		[[ ! -z $INLINE ]] && INDATA+=("$INLINE")
+		INDATA+=("$INLINE")
 	done
 fi
 
 # read command line input
 for ARG in "$@"
 do
-	[[ ! -z $ARG ]] && INDATA+=("$ARG")
+	INDATA+=("$ARG")
 done
 
 # exit if no data provided
@@ -31,8 +31,11 @@ IFS=''
 SCR=/dev/tty
 prs () { printf $@ > $SCR; }
 
+# functions to hide cursor to prevent flickering while drawing menu on screen
+cursor_hide () { prs '%b' '\e[?25l'; }
+cursor_show () { prs '%b' '\e[?25h'; }
+
 SELECTED_IDX=1  # selected index of the given parameters in $@
-MENU_IDX=1      # selected index of the menu drawn on screen
 
 SELECTED_COLOR='\e[44m\e[37m'
 DEFAULT_COLOR='\e[40m\e[37m'
@@ -43,17 +46,19 @@ SEARCH_TEXT=''
 loop=true
 while $loop
 do
-	# clear screen from cursor downward
-	prs '\e[0J' 
-	CURRENT_IDX=0  # index of current parameter
-	PREV_IDX=0     # index of previous parameter
-	MENU_PREV=0    # previous index from selected on-screen menu item
-	MENU_NEXT=0    # following index from selected on-screen menu item
-	NUM_ITEMS=0    # total items in on-screen menu
+	CURRENT_IDX=0    # index of current parameter
+	PREV_IDX=0       # index of previous parameter that matches the search criteria
+	PREV_PREV_IDX=0  # index of parameter before PREV_IDX
+	MENU_IDX=0       # selected index of the menu drawn on screen
+	MENU_PREV=0      # previous index from selected on-screen menu item
+	MENU_NEXT=0      # following index from selected on-screen menu item
+	NUM_ITEMS=0      # total items in on-screen menu
+
+	cursor_hide      # make cursor invisible until menu is fully printed
 
 	# loop through each parameter
 	for ITEM in "${INDATA[@]}"
-	do	
+	do
 		let 'CURRENT_IDX+=1'
 		# check if current parameter matches the search string
 		if [[ -z $SEARCH_TEXT ||  $(echo "$ITEM" | grep "$SEARCH_TEXT") ]];
@@ -65,10 +70,8 @@ do
 			then
 				MENU_NEXT=$CURRENT_IDX
 			fi
-
 			# start new line for this menu item
-			prs '\n'
-			
+			prs '\n%b>%b' $SELECTED_COLOR $DEFAULT_COLOR
 			# check if this item is currently selected
 			if [[ $CURRENT_IDX == $SELECTED_IDX ]];
 			then
@@ -82,14 +85,14 @@ do
 				MENU_NEXT=-1
 			fi
 			# print menu item
-			prs '%s' $ITEM
+			prs ' %s\e[K' $ITEM
 			# reset color to default
 			prs '%b' $DEFAULT_COLOR
 			# the current values are saved as the previous values
 			PREV_ITEM=$ITEM
+			PREV_PREV_IDX=$PREV_IDX
 			PREV_IDX=$CURRENT_IDX
-		else
-			# if the argument does not match the search string
+		else # if the argument does not match the search string
 			if [[ $CURRENT_IDX == $SELECTED_IDX ]];
 			then
 				# if the selected item no longer matches an updated search string, select the next available item
@@ -105,14 +108,15 @@ do
 		SELECTED_IDX=1
 		MENU_IDX=1
 	# if the selected row is now larger than the total rows after an updated search string, select the last row
-	elif [[ $SELECTED_IDX > $NUM_ITEMS ]];
+	elif [[ $MENU_IDX == 0 ]];
 	then
 		SELECTED_ITEM=$PREV_ITEM
 		SELECTED_IDX=$PREV_IDX
 		MENU_IDX=$NUM_ITEMS
+		MENU_PREV=$PREV_PREV_IDX
 		MENU_NEXT=0
 		# need to redraw the selected row, but now with highlighting
-		prs '\r%b%s%b' $SELECTED_COLOR $SELECTED_ITEM $DEFAULT_COLOR
+		prs '\r%b> \e[K%s%b' $SELECTED_COLOR $SELECTED_ITEM $DEFAULT_COLOR
 	fi
 
 	# move cursor back to top of list
@@ -123,6 +127,9 @@ do
 	
 	# print user-typed text for searching list
 	prs '\r:%s\e[K' $SEARCH_TEXT
+
+	# make cursor re-appear at end of search string
+	cursor_show
 
 	# wait for user to hit a key
 	read -sn1 key </dev/tty
@@ -159,6 +166,8 @@ do
 			if [[ ! -z $SEARCH_TEXT ]]
 			then
 				SEARCH_TEXT=${SEARCH_TEXT::-1}
+				# clear screen from cursor downward
+				prs '\e[0J' 
 			fi
 		;;
 		# enter
@@ -168,6 +177,8 @@ do
 		# other chars
 		(*)
 			SEARCH_TEXT="$SEARCH_TEXT$key"
+			# clear screen from cursor downward
+			prs '\e[0J' 
 		;;
 	esac
 done
