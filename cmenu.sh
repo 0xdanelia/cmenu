@@ -2,6 +2,9 @@
 
 INDATA=()
 
+# distinguish whitespace characters for user input
+IFS=''
+
 # read piped input
 if test ! -t 0;
 then
@@ -23,9 +26,6 @@ then
 	echo ''
 	exit 1
 fi
-
-# distinguish whitespace characters for user input
-IFS=''
 
 # print the menu on screen instead of piping the text to another program
 SCR=/dev/tty
