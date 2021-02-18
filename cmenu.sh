@@ -19,10 +19,8 @@ INDATA=()
 IFS=''
 
 # read piped input
-if test ! -t 0;
-then
-	while read -r INLINE; 
-	do
+if test ! -t 0; then
+	while read -r INLINE; do
 		INDATA+=("$INLINE")
 	done
 fi
@@ -34,11 +32,7 @@ do
 done
 
 # exit if no data provided
-if [[ -z $INDATA ]];
-then
-	echo ''
-	exit 1
-fi
+[[ -z $INDATA ]] && echo '' && exit 1
 
 SELECTED_IDX=1  # selected index of the given parameters in $@
 
@@ -47,12 +41,9 @@ DEFAULT_COLOR='\e[40m\e[37m'
 
 SEARCH_TEXT=''
 
-REPRINT_SCREEN=true
-
 # loop until the user presses Enter or ESC
 loop=true
-while $loop
-do
+while $loop; do
 	CURRENT_IDX=0    # index of current parameter
 	PREV_IDX=0       # index of previous parameter that matches the search criteria
 	PREV_PREV_IDX=0  # index of parameter before PREV_IDX
@@ -68,24 +59,19 @@ do
 	TROWS=$(tput lines) && let 'TROWS-=1'
 
 	# loop through each parameter
-	for ITEM in "${INDATA[@]}"
-	do	
+	for ITEM in "${INDATA[@]}"; do	
 		let 'CURRENT_IDX+=1'
 		# check if current parameter matches the search string
-		if [[ -z $SEARCH_TEXT ||  $(echo "$ITEM" | grep "$SEARCH_TEXT") ]];
-		then
+		if [[ -z $SEARCH_TEXT ||  $(echo "$ITEM" | grep "$SEARCH_TEXT") ]];	then
 			let 'NUM_ITEMS+=1'
 
 			# this will trigger one line after printing the selected row
-			if [[ $MENU_NEXT == -1 ]];
-			then
-				MENU_NEXT=$CURRENT_IDX
-			fi
+			[[ $MENU_NEXT == -1 ]] && MENU_NEXT=$CURRENT_IDX
+			
 			# start new line for this menu item
 			prs '\n%b>%b' $SELECTED_COLOR $DEFAULT_COLOR
 			# check if this item is currently selected
-			if [[ $CURRENT_IDX == $SELECTED_IDX ]];
-			then
+			if [[ $CURRENT_IDX == $SELECTED_IDX ]];	then
 				# set highlighted color
 				prs '%b' $SELECTED_COLOR
 				# set some useful indexes centered around the selected item
@@ -107,38 +93,30 @@ do
 			# stop printing if screen is full
 			[[ $NUM_ITEMS == $TROWS ]] && break
 			
-		else # if the argument does not match the search string
-			if [[ $CURRENT_IDX == $SELECTED_IDX ]];
-			then
-				# if the selected item no longer matches an updated search string, select the next available item
-				let 'SELECTED_IDX+=1'
-			fi
+		else
+			# if the selected item no longer matches an updated search string, select the next available item
+			[[ $CURRENT_IDX == $SELECTED_IDX ]] && let 'SELECTED_IDX+=1'
 		fi	
 	done
 
 	# check if the menu has no items
-	if [[ $NUM_ITEMS == 0 ]];
-	then
+	if [[ $NUM_ITEMS == 0 ]]; then
 		SELECTED_ITEM=''
 		SELECTED_IDX=1
 		MENU_IDX=1
 	# if the selected row is now larger than the total rows after an updated search string, select the last row
-	elif [[ $MENU_IDX == 0 ]];
-	then
+	elif [[ $MENU_IDX == 0 ]]; then
 		SELECTED_ITEM=$PREV_ITEM
 		SELECTED_IDX=$PREV_IDX
 		MENU_IDX=$NUM_ITEMS
 		MENU_PREV=$PREV_PREV_IDX
 		MENU_NEXT=0
 		# need to redraw the selected row, but now with highlighting
-		prs '\r%b> \e[K%s%b' $SELECTED_COLOR $SELECTED_ITEM $DEFAULT_COLOR
+		prs '\r%b> \e[K%s%b' $SELECTED_COLOR $(printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS) $DEFAULT_COLOR
 	fi
 
 	# move cursor back to top of list
-	if [[ $NUM_ITEMS > 0 ]];
-	then
-		prs '\e[%iA' $NUM_ITEMS
-	fi
+	[[ $NUM_ITEMS > 0 ]] && prs '\e[%iA' $NUM_ITEMS
 	
 	# print user-typed text for searching list
 	prs '\r:%s\e[K' $SEARCH_TEXT
@@ -157,33 +135,22 @@ do
 			case "$arrow" in
 				# up arrow
 				('[A'|'OA')
-					if [[ $MENU_PREV -gt 0 ]]; 
-					then
-						SELECTED_IDX=$MENU_PREV
-					fi
+					[[ $MENU_PREV -gt 0 ]] && SELECTED_IDX=$MENU_PREV
 				;;
 				# down arrow
 				('[B'|'OB')
-					if [[ $MENU_NEXT -gt 0 ]];  # down
-					then
-						SELECTED_IDX=$MENU_NEXT
-					fi
+					[[ $MENU_NEXT -gt 0 ]] && SELECTED_IDX=$MENU_NEXT
 				;;
 				# ESC
 				('')
 					loop=false
 					SELECTED_ITEM=''
-				;;			
+				;;
 			esac
 		;;
 		# Backspace
 		($'\x7f')
-			if [[ ! -z $SEARCH_TEXT ]]
-			then
-				SEARCH_TEXT=${SEARCH_TEXT::-1}
-				# clear screen from cursor downward
-				prs '\e[0J' 
-			fi
+			[[ ! -z $SEARCH_TEXT ]] && SEARCH_TEXT=${SEARCH_TEXT::-1} && prs '\e[0J'
 		;;
 		# enter
 		('')
@@ -191,8 +158,7 @@ do
 		;;
 		# other chars
 		(*)
-			SEARCH_TEXT="$SEARCH_TEXT$key"
-			# clear screen from cursor downward
+			SEARCH_TEXT=$SEARCH_TEXT$key
 			prs '\e[0J' 
 		;;
 	esac
