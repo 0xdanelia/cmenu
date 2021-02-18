@@ -1,5 +1,18 @@
 #!/bin/bash
 
+# print the menu on screen instead of piping the text to another program
+SCR=/dev/tty
+prs () { printf $@ > /dev/tty; }
+
+# functions to hide cursor to prevent flickering while drawing menu on screen
+cursor_hide () { prs '%b' '\e[?25l'; }
+cursor_show () { prs '%b' '\e[?25h'; }
+
+prs '\e[s'     # save cursor
+prs '\e[?47h'  # save screen
+prs '\e[H'     # move cursor to top of screen
+
+# collection for input
 INDATA=()
 
 # distinguish whitespace characters for user input
@@ -27,20 +40,14 @@ then
 	exit 1
 fi
 
-# print the menu on screen instead of piping the text to another program
-SCR=/dev/tty
-prs () { printf $@ > $SCR; }
-
-# functions to hide cursor to prevent flickering while drawing menu on screen
-cursor_hide () { prs '%b' '\e[?25l'; }
-cursor_show () { prs '%b' '\e[?25h'; }
-
 SELECTED_IDX=1  # selected index of the given parameters in $@
 
 SELECTED_COLOR='\e[44m\e[37m'
 DEFAULT_COLOR='\e[40m\e[37m'
 
 SEARCH_TEXT=''
+
+REPRINT_SCREEN=true
 
 # loop until the user presses Enter or ESC
 loop=true
@@ -56,9 +63,13 @@ do
 
 	cursor_hide      # make cursor invisible until menu is fully printed
 
+	# keep track of screen size to prevent menu from printing off screen
+	TCOLS=$(tput cols) && let 'TCOLS-=2'
+	TROWS=$(tput lines) && let 'TROWS-=1'
+
 	# loop through each parameter
 	for ITEM in "${INDATA[@]}"
-	do
+	do	
 		let 'CURRENT_IDX+=1'
 		# check if current parameter matches the search string
 		if [[ -z $SEARCH_TEXT ||  $(echo "$ITEM" | grep "$SEARCH_TEXT") ]];
@@ -85,20 +96,24 @@ do
 				MENU_NEXT=-1
 			fi
 			# print menu item
-			prs ' %s\e[K' $ITEM
+			prs ' %s\e[K' $(printf '%s' $ITEM | cut -c 1-$TCOLS)
 			# reset color to default
 			prs '%b' $DEFAULT_COLOR
 			# the current values are saved as the previous values
 			PREV_ITEM=$ITEM
 			PREV_PREV_IDX=$PREV_IDX
 			PREV_IDX=$CURRENT_IDX
+
+			# stop printing if screen is full
+			[[ $NUM_ITEMS == $TROWS ]] && break
+			
 		else # if the argument does not match the search string
 			if [[ $CURRENT_IDX == $SELECTED_IDX ]];
 			then
 				# if the selected item no longer matches an updated search string, select the next available item
 				let 'SELECTED_IDX+=1'
 			fi
-		fi
+		fi	
 	done
 
 	# check if the menu has no items
@@ -183,8 +198,8 @@ do
 	esac
 done
 
-# clear menu from screen
-prs '\r\e[0J'
+prs '\e[?47l'  # restore screen
+prs '\e[u'     # restore cursor
 
 # print result
 echo "$SELECTED_ITEM"
