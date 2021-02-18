@@ -2,7 +2,7 @@
 
 # print the menu on screen instead of piping the text to another program
 SCR=/dev/tty
-prs () { printf $@ > /dev/tty; }
+prs () { printf $@ > /dev/tty ; }
 
 # functions to hide cursor to prevent flickering while drawing menu on screen
 cursor_hide () { prs '%b' '\e[?25l'; }
@@ -41,9 +41,9 @@ DEFAULT_COLOR='\e[40m\e[37m'
 
 SEARCH_TEXT=''
 
-# loop until the user presses Enter or ESC
-loop=true
-while $loop; do
+REPRINT=true
+
+PRINT_MENU () {
 	CURRENT_IDX=0    # index of current parameter
 	PREV_IDX=0       # index of previous parameter that matches the search criteria
 	PREV_PREV_IDX=0  # index of parameter before PREV_IDX
@@ -53,6 +53,9 @@ while $loop; do
 	NUM_ITEMS=0      # total items in on-screen menu
 
 	cursor_hide      # make cursor invisible until menu is fully printed
+
+	# clear screen
+	prs '\e[0J'
 
 	# keep track of screen size to prevent menu from printing off screen
 	TCOLS=$(tput cols) && let 'TCOLS-=2'
@@ -82,9 +85,9 @@ while $loop; do
 				MENU_NEXT=-1
 			fi
 			# print menu item
-			prs ' %s\e[K' $(printf '%s' $ITEM | cut -c 1-$TCOLS)
+			prs ' %s\e[0K' $(printf '%s' $ITEM | cut -c 1-$TCOLS)
 			# reset color to default
-			prs '%b' $DEFAULT_COLOR
+			prs '%b\e' $DEFAULT_COLOR
 			# the current values are saved as the previous values
 			PREV_ITEM=$ITEM
 			PREV_PREV_IDX=$PREV_IDX
@@ -112,7 +115,7 @@ while $loop; do
 		MENU_PREV=$PREV_PREV_IDX
 		MENU_NEXT=0
 		# need to redraw the selected row, but now with highlighting
-		prs '\r%b> \e[K%s%b' $SELECTED_COLOR $(printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS) $DEFAULT_COLOR
+		prs '\r%b> \e[0K%s%b' $SELECTED_COLOR $(printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS) $DEFAULT_COLOR
 	fi
 
 	# move cursor back to top of list
@@ -123,6 +126,12 @@ while $loop; do
 
 	# make cursor re-appear at end of search string
 	cursor_show
+}
+
+GET_KEY () {
+
+	# flush stdin
+	read -t.001 -s key </dev/tty
 
 	# wait for user to hit a key
 	read -sn1 key </dev/tty
@@ -131,15 +140,22 @@ while $loop; do
 		# special keys will send multiple characters, beginning with this sequence
 		($'\033')
 			# read the remaining characters for a special key
-			read -t.001 -sn2 arrow </dev/tty
+			arrow=''
+			while read -t.001 -sn1 nextkey </dev/tty; do
+				arrow=$arrow$nextkey
+				[[ ${#arrow} -ge 2 ]] && break
+			done
+			
 			case "$arrow" in
 				# up arrow
-				('[A'|'OA')
+				('[A')
 					[[ $MENU_PREV -gt 0 ]] && SELECTED_IDX=$MENU_PREV
+					REPRINT=true
 				;;
 				# down arrow
-				('[B'|'OB')
+				('[B')
 					[[ $MENU_NEXT -gt 0 ]] && SELECTED_IDX=$MENU_NEXT
+					REPRINT=true
 				;;
 				# ESC
 				('')
@@ -150,7 +166,7 @@ while $loop; do
 		;;
 		# Backspace
 		($'\x7f')
-			[[ ! -z $SEARCH_TEXT ]] && SEARCH_TEXT=${SEARCH_TEXT::-1} && prs '\e[0J'
+			[[ ! -z $SEARCH_TEXT ]] && SEARCH_TEXT=${SEARCH_TEXT::-1} && prs '\e[0J' && REPRINT=true
 		;;
 		# enter
 		('')
@@ -159,9 +175,17 @@ while $loop; do
 		# other chars
 		(*)
 			SEARCH_TEXT=$SEARCH_TEXT$key
-			prs '\e[0J' 
+			REPRINT=true
 		;;
 	esac
+}
+
+# loop until the user presses Enter or ESC
+loop=true
+
+while $loop; do
+	[[ $REPRINT ]] && REPRINT=false && PRINT_MENU
+	GET_KEY
 done
 
 prs '\e[?47l'  # restore screen
