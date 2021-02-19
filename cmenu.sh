@@ -13,17 +13,24 @@ prs '\e[?47h'  # save screen
 prs '\e[H'     # move cursor to top of screen
 
 # collection for input
-INDATA=()
+declare -a INDATA
+declare -a DATA_INDEXES
+declare -a SEARCH_HISTORY
 
 # distinguish whitespace characters for user input
 IFS=''
 
 # read piped input
 if test ! -t 0; then
+	count=0
 	while read -r INLINE; do
 		INDATA+=("$INLINE")
+		DATA_INDEXES+=($count)
+		let 'count+=1'
 	done
 fi
+
+SEARCH_HISTORY=("${DATA_INDEXES[@]}")
 
 # read command line input
 for ARG in "$@"
@@ -34,7 +41,8 @@ done
 # exit if no data provided
 [[ -z $INDATA ]] && echo '' && exit 1
 
-SELECTED_IDX=1  # selected index of the given parameters in $@
+SELECTED_IDX=0    # selected index of the given parameters in $@
+SELECTED_ITEM=''  # the menu item to output
 
 SELECTED_COLOR='\e[44m\e[37m'
 DEFAULT_COLOR='\e[40m\e[37m'
@@ -44,14 +52,12 @@ SEARCH_TEXT=''
 REPRINT=true
 
 PRINT_MENU () {
-	CURRENT_IDX=0    # index of current parameter
-	PREV_IDX=0       # index of previous parameter that matches the search criteria
-	PREV_PREV_IDX=0  # index of parameter before PREV_IDX
-	MENU_IDX=0       # selected index of the menu drawn on screen
-	MENU_PREV=0      # previous index from selected on-screen menu item
+	PREV_IDX=-1      # index of previous parameter that matches the search criteria
+	PREV_PREV_IDX=-2 # index of parameter before PREV_IDX
+	MENU_PREV=-1     # previous index from selected on-screen menu item
 	MENU_NEXT=0      # following index from selected on-screen menu item
 	NUM_ITEMS=0      # total items in on-screen menu
-
+	SELECTED=false   # lets us know when the selected item is printed
 	cursor_hide      # make cursor invisible until menu is fully printed
 
 	# clear screen
@@ -62,60 +68,53 @@ PRINT_MENU () {
 	TROWS=$(tput lines) && let 'TROWS-=1'
 
 	# loop through each parameter
-	for ITEM in "${INDATA[@]}"; do	
-		let 'CURRENT_IDX+=1'
-		# check if current parameter matches the search string
-		if [[ -z $SEARCH_TEXT ||  $(echo "$ITEM" | grep "$SEARCH_TEXT") ]];	then
-			let 'NUM_ITEMS+=1'
+	for CURRENT_IDX in ${DATA_INDEXES[@]}; do
+		ITEM=${INDATA[$CURRENT_IDX]}
 
-			# this will trigger one line after printing the selected row
-			[[ $MENU_NEXT == -1 ]] && MENU_NEXT=$CURRENT_IDX
-			
-			# start new line for this menu item
-			prs '\n%b>%b' $SELECTED_COLOR $DEFAULT_COLOR
-			# check if this item is currently selected
-			if [[ $CURRENT_IDX == $SELECTED_IDX ]];	then
-				# set highlighted color
-				prs '%b' $SELECTED_COLOR
-				# set some useful indexes centered around the selected item
-				SELECTED_ITEM=$ITEM
-				MENU_IDX=$NUM_ITEMS
-				MENU_PREV=$PREV_IDX
-				# this will set MENU_NEXT when printing the following row
-				MENU_NEXT=-1
-			fi
-			# print menu item
-			prs ' %s\e[0K' $(printf '%s' $ITEM | cut -c 1-$TCOLS)
-			# reset color to default
-			prs '%b\e' $DEFAULT_COLOR
-			# the current values are saved as the previous values
-			PREV_ITEM=$ITEM
-			PREV_PREV_IDX=$PREV_IDX
-			PREV_IDX=$CURRENT_IDX
+		let 'NUM_ITEMS+=1'
+		
+		# this will trigger one line after printing the selected row
+		$SELECTED && [[ $MENU_NEXT == 0 ]] && MENU_NEXT=$CURRENT_IDX
 
-			# stop printing if screen is full
-			[[ $NUM_ITEMS == $TROWS ]] && break
-			
-		else
-			# if the selected item no longer matches an updated search string, select the next available item
-			[[ $CURRENT_IDX == $SELECTED_IDX ]] && let 'SELECTED_IDX+=1'
-		fi	
+		# if the selected item is filtered out, select the next available item
+		! $SELECTED && [[ $CURRENT_IDX -gt $SELECTED_IDX ]] && SELECTED_IDX=$CURRENT_IDX
+
+		# if the selected item and all items after it are filtered out, select the final item
+		! $SELECTED && [[ $CURRENT_IDX -eq ${DATA_INDEXES[-1]} ]] && SELECTED_IDX=$CURRENT_IDX
+		
+		# start new line for this menu item
+		prs '\n%b>%b' $SELECTED_COLOR $DEFAULT_COLOR
+		# check if this item is currently selected
+		if [[ $CURRENT_IDX == $SELECTED_IDX ]];	then
+			# set highlighted color
+			prs '%b' $SELECTED_COLOR
+			# set some useful indexes centered around the selected item
+			SELECTED_ITEM=$ITEM
+			MENU_PREV=$PREV_IDX
+			# this will set MENU_NEXT when printing the following row
+			SELECTED=true
+		fi		
+		# print menu item
+		prs ' %s\e[0K' $(printf '%s' $ITEM | cut -c 1-$TCOLS)
+		# reset color to default
+		prs '%b\e' $DEFAULT_COLOR
+		# the current values are saved as the previous values
+		PREV_ITEM=$ITEM
+		PREV_PREV_IDX=$PREV_IDX
+		PREV_IDX=$CURRENT_IDX
+
+		# stop printing if screen is full
+		[[ $NUM_ITEMS == $TROWS ]] && break
 	done
 
 	# check if the menu has no items
 	if [[ $NUM_ITEMS == 0 ]]; then
 		SELECTED_ITEM=''
-		SELECTED_IDX=1
-		MENU_IDX=1
-	# if the selected row is now larger than the total rows after an updated search string, select the last row
-	elif [[ $MENU_IDX == 0 ]]; then
-		SELECTED_ITEM=$PREV_ITEM
-		SELECTED_IDX=$PREV_IDX
-		MENU_IDX=$NUM_ITEMS
-		MENU_PREV=$PREV_PREV_IDX
-		MENU_NEXT=0
-		# need to redraw the selected row, but now with highlighting
-		prs '\r%b> \e[0K%s%b' $SELECTED_COLOR $(printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS) $DEFAULT_COLOR
+		SELECTED_IDX=0
+		MENU_IDX=0
+	elif ! $SELECTED; then
+		echo "something went wrong"
+		read key
 	fi
 
 	# move cursor back to top of list
@@ -131,7 +130,7 @@ PRINT_MENU () {
 GET_KEY () {
 
 	# flush stdin
-	read -t.001 -s key </dev/tty
+	read -s -t.001 key </dev/tty
 
 	# wait for user to hit a key
 	read -sn1 key </dev/tty
@@ -140,20 +139,16 @@ GET_KEY () {
 		# special keys will send multiple characters, beginning with this sequence
 		($'\033')
 			# read the remaining characters for a special key
-			arrow=''
-			while read -t.001 -sn1 nextkey </dev/tty; do
-				arrow=$arrow$nextkey
-				[[ ${#arrow} -ge 2 ]] && break
-			done
+			read -s -t.001 arrow </dev/tty
 			
 			case "$arrow" in
 				# up arrow
-				('[A')
-					[[ $MENU_PREV -gt 0 ]] && SELECTED_IDX=$MENU_PREV
+				('[A'|'OA')
+					[[ $MENU_PREV -ge 0 ]] && SELECTED_IDX=$MENU_PREV
 					REPRINT=true
 				;;
 				# down arrow
-				('[B')
+				('[B'|'OB')
 					[[ $MENU_NEXT -gt 0 ]] && SELECTED_IDX=$MENU_NEXT
 					REPRINT=true
 				;;
@@ -166,7 +161,15 @@ GET_KEY () {
 		;;
 		# Backspace
 		($'\x7f')
-			[[ ! -z $SEARCH_TEXT ]] && SEARCH_TEXT=${SEARCH_TEXT::-1} && prs '\e[0J' && REPRINT=true
+			if [[ ! -z $SEARCH_TEXT ]]; then
+				SEARCH_TEXT=${SEARCH_TEXT::-1}
+				#prs '\e[0J'
+				IFS=","
+				DATA_INDEXES=( "${SEARCH_HISTORY[@]}"  )
+				DATA_INDEXES=( $(SEARCH_FILTER) )
+				IFS=''
+				REPRINT=true
+			fi
 		;;
 		# enter
 		('')
@@ -175,16 +178,29 @@ GET_KEY () {
 		# other chars
 		(*)
 			SEARCH_TEXT=$SEARCH_TEXT$key
+			IFS=","
+			DATA_INDEXES=( $(SEARCH_FILTER) )
+			IFS=''
 			REPRINT=true
 		;;
 	esac
+}
+
+SEARCH_FILTER () {
+	FILTERED=()
+
+	for idx in ${DATA_INDEXES[@]}; do
+		[[ $(echo ${INDATA[$idx]} | grep "$SEARCH_TEXT") ]] && FILTERED+=("$idx,")
+	done
+
+	printf '%s' "${FILTERED[@]}"
 }
 
 # loop until the user presses Enter or ESC
 loop=true
 
 while $loop; do
-	[[ $REPRINT ]] && REPRINT=false && PRINT_MENU
+	$REPRINT && REPRINT=false && PRINT_MENU
 	GET_KEY
 done
 
