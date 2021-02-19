@@ -12,8 +12,6 @@ prs '\e[s'     # save cursor
 prs '\e[?47h'  # save screen
 prs '\e[H'     # move cursor to top of screen
 
-KEYFILE="~.cmenu"
-
 # collection for input
 declare -a INDATA
 declare -a DATA_INDEXES
@@ -33,12 +31,26 @@ if test ! -t 0; then
 fi
 
 SEARCH_HISTORY=("${DATA_INDEXES[@]}")
+PROMPT=":"
+nextPrompt=false
 
 # read command line input
-for ARG in "$@"
+for ARG in "$@";
 do
-	INDATA+=("$ARG")
+	$nextPrompt && PROMPT="$ARG" && nextPrompt=false && continue
+
+	case "$ARG" in
+		('-p')
+			nextPrompt=true
+		;;
+		(*)
+			prs 'Invalid parameter %s\n' $ARG
+			exit 1
+		;;
+	esac
 done
+
+$nextPrompt && prs 'Did not find prompt after "-p"\n' && exit 1
 
 # exit if no data provided
 [[ -z $INDATA ]] && echo '' && exit 1
@@ -63,11 +75,11 @@ DESELECT_ITEM () {
 	# move cursor to selected item
 	prs '\e[%iB' $(( $MENU_IDX + 1 ))
 	# reprint selected item with default color
-	prs '\r%b>%b %s\e[0K' $SELECTED_COLOR $DEFAULT_COLOR $SELECTED_ITEM
+	prs '\r%b>%b %s\e[0K' $SELECTED_COLOR $DEFAULT_COLOR $(PRINT_SELECTED)
 	# move cursor back to top of screen
 	prs '\e[H'
 	# print user-typed text for searching list
-	prs '\r%b:%s\e[K' $DEFAULT_COLOR $SEARCH_TEXT
+	PRINT_SEARCH
 }
 
 SELECT_ITEM () {
@@ -75,11 +87,24 @@ SELECT_ITEM () {
 	# move cursor to selected item
 	prs '\e[%iB' $(( $MENU_IDX + 1 ))
 	# reprint selected item with default color
-	prs '\r%b> %s\e[0K' $SELECTED_COLOR $SELECTED_ITEM
+	prs '\r%b> %s\e[0K' $SELECTED_COLOR $(PRINT_SELECTED)
 	# move cursor back to top of screen
 	prs '\e[H'
 	# print user-typed text for searching list
-	prs '\r%b:%s\e[K' $DEFAULT_COLOR $SEARCH_TEXT
+	PRINT_SEARCH
+}
+
+PRINT_SELECTED () {
+	printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS
+}
+
+PRINT_ITEM () {
+	printf '%s' $ITEM | cut -c 1-$TCOLS
+}
+
+PRINT_SEARCH () {
+	width=$(tput cols) && let "width-=${#PROMPT}"
+	prs '\r%b%s%s\e[K' $DEFAULT_COLOR $PROMPT $(printf '%s' $SEARCH_TEXT | cut -c 1-$width)
 }
 
 PRINT_MENU () {
@@ -98,9 +123,9 @@ PRINT_MENU () {
 
 		prs '\n%b>' $SELECTED_COLOR
 		if [[ $CURRENT_IDX == $SELECTED_IDX ]]; then
-			prs ' %s\e[0K' $(printf '%s' $ITEM | cut -c 1-$TCOLS)
+			prs ' %s\e[0K' $(PRINT_ITEM)
 		else
-			prs '%b %s\e[0K' $DEFAULT_COLOR $(printf '%s' $ITEM | cut -c 1-$TCOLS)
+			prs '%b %s\e[0K' $DEFAULT_COLOR $(PRINT_ITEM)
 		fi
 
 		[[ $count == $NUM_ITEMS ]] && break
@@ -113,7 +138,7 @@ PRINT_MENU () {
 	prs '\e[H'
 	
 	# print user-typed text for searching list
-	prs '\r%b:%s\e[K' $DEFAULT_COLOR $SEARCH_TEXT
+	PRINT_SEARCH
 
 	# make cursor re-appear at end of search string
 	cursor_show
@@ -294,7 +319,7 @@ SEARCH_FILTER () {
 					fi
 				;;
 			esac
-			prs '\r%b:%s\e[K' $DEFAULT_COLOR $SEARCH_TEXT
+			PRINT_SEARCH
 		done
 	done
 	# now we use the filtered list to display and select items
