@@ -72,39 +72,45 @@ SEARCH_TEXT=''
 
 DESELECT_ITEM () {
 
-	# move cursor to selected item
-	prs '\e[%iB' $(( $MENU_IDX + 1 ))
-	# reprint selected item with default color
-	prs '\r%b>%b %s\e[0K' $SELECTED_COLOR $DEFAULT_COLOR $(PRINT_SELECTED)
-	# move cursor back to top of screen
-	prs '\e[H'
-	# print user-typed text for searching list
-	PRINT_SEARCH
+	if [[ $NUM_ITEMS -ge 0 ]]; then
+		# move cursor to selected item
+		prs '\e[%iB' $(( $MENU_IDX + 1 ))
+		# reprint selected item with default color
+		prs '\r%b>%b %s\e[0K' $SELECTED_COLOR $DEFAULT_COLOR $(PRINT_SELECTED)
+		# move cursor back to top of screen
+		prs '\e[H'
+		# print user-typed text for searching list
+		PRINT_SEARCH
+	fi
 }
 
 SELECT_ITEM () {
 
-	# move cursor to selected item
-	prs '\e[%iB' $(( $MENU_IDX + 1 ))
-	# reprint selected item with default color
-	prs '\r%b> %s\e[0K' $SELECTED_COLOR $(PRINT_SELECTED)
-	# move cursor back to top of screen
-	prs '\e[H'
-	# print user-typed text for searching list
-	PRINT_SEARCH
+	if [[ $NUM_ITEMS -ge 0 ]]; then
+		# move cursor to selected item
+		prs '\e[%iB' $(( $MENU_IDX + 1 ))
+		# reprint selected item with default color
+		prs '\r%b> %s\e[0K' $SELECTED_COLOR $(PRINT_SELECTED)
+		# move cursor back to top of screen
+		prs '\e[H'
+		# print user-typed text for searching list
+		PRINT_SEARCH
+	fi
 }
 
 PRINT_SELECTED () {
-	printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS
+	[[ $NUM_ITEMS -ge 0 ]] && printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS
 }
 
 PRINT_ITEM () {
-	printf '%s' $ITEM | cut -c 1-$TCOLS
+	[[ $NUM_ITEMS -ge 0 ]] && printf '%s' $ITEM | cut -c 1-$TCOLS
 }
 
 PRINT_SEARCH () {
 	width=$(tput cols) && let "width-=${#PROMPT}"
+	cursor_hide
 	prs '\r%b%s%s\e[K' $DEFAULT_COLOR $PROMPT $(printf '%s' $SEARCH_TEXT | cut -c 1-$width)
+	cursor_show
 }
 
 PRINT_MENU () {
@@ -239,11 +245,22 @@ GET_KEY () {
 			loop=false
 			SELECTED_ITEM=''
 		;;
+		# DEL
+		($'\x1b[P')
+			if [[ ! -z $SEARCH_TEXT ]]; then
+				SEARCH_TEXT=''
+				PRINT_SEARCH
+				DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
+				DESELECT_ITEM
+				GET_INDEXES
+				REPRINT
+			fi
+		;;
 		# Backspace
 		($'\x08'|$'\x7f')
 			if [[ ! -z $SEARCH_TEXT ]]; then
 				SEARCH_TEXT=${SEARCH_TEXT::-1}
-				prs '\r%b:%s\e[K' $DEFAULT_COLOR $SEARCH_TEXT
+				PRINT_SEARCH
 				DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
 				DESELECT_ITEM
 				SEARCH_FILTER
@@ -278,6 +295,7 @@ SEARCH_FILTER () {
 
 	# list of indexes to return
 	FILTERED=()
+	STARTING_SEARCH_TEXT=$SEARCH_TEXT
 
 	SEARCH_AGAIN=true
 	while $SEARCH_AGAIN; do
@@ -285,26 +303,50 @@ SEARCH_FILTER () {
 
 		# compare input against the search string
 		for idx in ${DATA_INDEXES[@]}; do
-			[[ $(echo ${INDATA[$idx]} | grep "$SEARCH_TEXT") ]] && FILTERED+=($idx) && count+=1
+			[[ $(echo ${INDATA[$idx]} | grep "$SEARCH_TEXT") ]] && FILTERED+=($idx)
 
 			# try to detect key presses while filtering
 			key=''
 			extra=''
-			read -sn1 -t.001 key </dev/tty
+			read -s -N1 -t.001 key </dev/tty
 			read -s -t.001 extra </dev/tty
 			key=$key$extra
-
-			case "$key" in
-				# Backspace
-				($'\x08'|$'\x7f')
+			
+			case $key in
+				# Backspace  # TODO: get this to work consistently
+				($'\x08'|$'\x7f'|$'\177')
 					if [[ ! -z $SEARCH_TEXT ]]; then
+						if [[ $SEARCH_TEXT == $STARTING_SEARCH_TEXT ]]; then
+							DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
+							STARTING_SEARCH_TEXT=''
+						fi
 						SEARCH_TEXT=${SEARCH_TEXT::-1}
-						DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
-						DESELECT_ITEM
-						SEARCH_FILTER
-						GET_INDEXES
-						REPRINT
+						SEARCH_AGAIN=true
+						FILTERED=()
+						PRINT_SEARCH
+						break
 					fi
+				;;
+				# ESC
+				($'\x1b')
+					loop=false
+					SELECTED_ITEM=''
+					break
+				;;
+				# DEL
+				($'\x1b[P')
+					if [[ ! -z $SEARCH_TEXT ]]; then
+						SEARCH_TEXT=''
+						DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
+						SEARCH_AGAIN=true
+						FILTERED=()
+						PRINT_SEARCH
+						break
+					fi
+				;;
+				# enter
+				($'\x0a')
+					loop=false
 				;;
 				(*)
 					# don't wait for filter to finish
@@ -312,14 +354,12 @@ SEARCH_FILTER () {
 						SEARCH_TEXT=$SEARCH_TEXT$key
 						# start over using updated search string
 						SEARCH_AGAIN=true
-						key=''
-						extra=''
 						FILTERED=()
+						PRINT_SEARCH
 						break
 					fi
 				;;
 			esac
-			PRINT_SEARCH
 		done
 	done
 	# now we use the filtered list to display and select items
@@ -334,6 +374,7 @@ while $loop; do
 	GET_KEY
 done
 
+kill $! 2>/dev/null
 prs '\e[?47l'  # restore screen
 prs '\e[u'     # restore cursor
 
