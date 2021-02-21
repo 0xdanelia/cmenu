@@ -69,6 +69,8 @@ filter_search () {
 print_menu () {
 	get_menu_index
 	count=-1
+	item_width=$(($(tput cols)-2))
+	max_height=$(($(tput lines)-1))
 	
 	cursor_hide
 	prs '\e[H'
@@ -76,15 +78,17 @@ print_menu () {
 		let 'count+=1'
 		[[ "$idx" == 'done' ]] && break
 		[[ $count == $select_menu_idx ]] && clr_line=$clr_select || clr_line=$clr_default
-		prs '\n%b>%b %s\e[K' $clr_select $clr_line ${stdin[$idx]}
+		prs '\n%b>%b %s\e[K' $clr_select $clr_line $(echo "${stdin[$idx]}" | cut -c 1-$item_width)
+		[[ $(($count+2)) == $max_height ]] && break
 	done < $index_file
-	prs '%b\e[0J\e[H' $clr_default
+	prs '\n%b\e[0J\e[H' $clr_default
 	print_search
 	cursor_show
 }
 
 print_search () {
-	prs '\e[H\r%s\e[K' $prompt$searchtext
+	search_width=$(($(tput cols)-${#prompt}))
+	prs '\e[H\r%s\e[K' $(echo "$prompt$searchtext" | cut -c 1-$search_width)
 }
 
 print_selected () {
