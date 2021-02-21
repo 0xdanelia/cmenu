@@ -1,382 +1,199 @@
 #!/bin/bash
 
-# print the menu on screen instead of piping the text to another program
-SCR=/dev/tty
 prs () { printf $@ > /dev/tty ; }
-
-# functions to hide cursor to prevent flickering while drawing menu on screen
 cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
+
+stdin=()    # strings of input text
+indexes=()  # indexes of menu items
+# read piped input
+if test ! -t 0; then
+	count=0
+	while read -rs inline; do
+		stdin+=("$inline")
+		indexes+=($count)
+		let 'count+=1'
+	done
+fi
+
+original_indexes=( ${indexes[@]} )
 
 prs '\e[s'     # save cursor
 prs '\e[?47h'  # save screen
 prs '\e[H'     # move cursor to top of screen
 
-# collection for input
-declare -a INDATA
-declare -a DATA_INDEXES
-declare -a SEARCH_HISTORY
-
-# distinguish whitespace characters for user input
 IFS=''
+searchtext=''  # user-typed filter
+prompt=':'
 
-# read piped input
-if test ! -t 0; then
-	count=0
-	while read -rs INLINE; do
-		INDATA+=("$INLINE")
-		DATA_INDEXES+=($count)
-		let 'count+=1'
+select_idx=0
+select_menu_idx=0
+select_item=''
+
+index_file='.cmenu_indexes'
+select_file='.cmenu_select'
+
+clr_select='\e[44m\e[37m'
+clr_default='\e[40m\e[37m'
+
+filter_proc=''
+print_proc=''
+
+filter_search () {
+	prev_idx=-1
+	count=-1
+
+	[[ -e $index_file ]] && rm $index_file
+	for idx in ${indexes[@]}; do
+		if [[ $(echo ${stdin[$idx]} | grep "$searchtext") ]]; then
+			let 'count+=1'
+			# keep track of the item before the selected item
+			[[ $idx == $select_idx ]] && select_menu_idx=$count
+			 echo $idx >> $index_file
+			 prev_idx=$idx
+		else
+			# if filter removes selected item from list, select the next available item
+			[[ $idx == $select_idx ]] && let 'select_idx+=1'
+		fi
 	done
-fi
+	echo 'done' >> $index_file
 
-SEARCH_HISTORY=("${DATA_INDEXES[@]}")
-PROMPT=":"
-nextPrompt=false
+	# if filter shrinks list past selected item, select the last item
+	[[ $select_idx -gt $prev_idx ]] && select_idx=$prev_idx && select_menu_idx=$count
 
-# read command line input
-for ARG in "$@";
-do
-	$nextPrompt && PROMPT="$ARG" && nextPrompt=false && continue
-
-	case "$ARG" in
-		('-p')
-			nextPrompt=true
-		;;
-		(*)
-			prs 'Invalid parameter %s\n' $ARG
-			exit 1
-		;;
-	esac
-done
-
-$nextPrompt && prs 'Did not find prompt after "-p"\n' && exit 1
-
-# exit if no data provided
-[[ -z $INDATA ]] && echo '' && exit 1
-
-SELECTED_IDX=0    # selected index of the given parameters in $@
-SELECTED_ITEM=''  # the menu item to output
-PREV_ITEM=''
-NEXT_ITEM=''
-PREV_IDX=-1       # index of previous parameter that matches the search criteria
-PREV_PREV_IDX=-2  # index of parameter before PREV_IDX
-MENU_PREV=-1      # previous index from selected on-screen menu item
-MENU_NEXT=0       # following index from selected on-screen menu item
-NUM_ITEMS=0       # total items in on-screen menu
-
-SELECTED_COLOR='\e[44m\e[37m'
-DEFAULT_COLOR='\e[40m\e[37m'
-
-SEARCH_TEXT=''
-
-DESELECT_ITEM () {
-
-	if [[ $NUM_ITEMS -ge 0 ]]; then
-		# move cursor to selected item
-		prs '\e[%iB' $(( $MENU_IDX + 1 ))
-		# reprint selected item with default color
-		prs '\r%b>%b %s\e[0K' $SELECTED_COLOR $DEFAULT_COLOR $(PRINT_SELECTED)
-		# move cursor back to top of screen
-		prs '\e[H'
-		# print user-typed text for searching list
-		PRINT_SEARCH
-	fi
+	save_menu_index
+	
+	print_menu
 }
 
-SELECT_ITEM () {
-
-	if [[ $NUM_ITEMS -ge 0 ]]; then
-		# move cursor to selected item
-		prs '\e[%iB' $(( $MENU_IDX + 1 ))
-		# reprint selected item with default color
-		prs '\r%b> %s\e[0K' $SELECTED_COLOR $(PRINT_SELECTED)
-		# move cursor back to top of screen
-		prs '\e[H'
-		# print user-typed text for searching list
-		PRINT_SEARCH
-	fi
-}
-
-PRINT_SELECTED () {
-	[[ $NUM_ITEMS -ge 0 ]] && printf '%s' $SELECTED_ITEM | cut -c 1-$TCOLS
-}
-
-PRINT_ITEM () {
-	[[ $NUM_ITEMS -ge 0 ]] && printf '%s' $ITEM | cut -c 1-$TCOLS
-}
-
-PRINT_SEARCH () {
-	width=$(tput cols) && let "width-=${#PROMPT}"
-	cursor_hide
-	prs '\r%b%s%s\e[K' $DEFAULT_COLOR $PROMPT $(printf '%s' $SEARCH_TEXT | cut -c 1-$width)
-	cursor_show
-}
-
-PRINT_MENU () {
-
-	# hide cursor to prevent flickering while printing
-	cursor_hide
-
-	# keep track of screen width to prevent word-wrap
-	TCOLS=$(tput cols) && let 'TCOLS-=2'
+print_menu () {
+	get_menu_index
 	count=-1
 	
-	# loop through each parameter
-	for CURRENT_IDX in ${DATA_INDEXES[@]}; do
-		ITEM=${INDATA[$CURRENT_IDX]}
-		let 'count+=1'
-
-		prs '\n%b>' $SELECTED_COLOR
-		if [[ $CURRENT_IDX == $SELECTED_IDX ]]; then
-			prs ' %s\e[0K' $(PRINT_ITEM)
-		else
-			prs '%b %s\e[0K' $DEFAULT_COLOR $(PRINT_ITEM)
-		fi
-
-		[[ $count == $NUM_ITEMS ]] && break
-	done
-
-	# clear rest of screen
-	prs '\e[%iC%b\e[0J' $TCOLS $DEFAULT_COLOR
-
-	# move cursor back to top of screen
+	cursor_hide
 	prs '\e[H'
-	
-	# print user-typed text for searching list
-	PRINT_SEARCH
-
-	# make cursor re-appear at end of search string
+	while read idx; do
+		let 'count+=1'
+		[[ "$idx" == 'done' ]] && break
+		[[ $count == $select_menu_idx ]] && clr_line=$clr_select || clr_line=$clr_default
+		prs '\n%b>%b %s\e[K' $clr_select $clr_line ${stdin[$idx]}
+	done < $index_file
+	prs '%b\e[0J\e[H' $clr_default
+	print_search
 	cursor_show
 }
 
-GET_INDEXES () {
-	PREV_ITEM=''
-	NEXT_ITEM=''
-	PREV_IDX=-1      # index of previous parameter that matches the search criteria
-	PREV_PREV_IDX=-2 # index of parameter before PREV_IDX
-	MENU_PREV=-1     # previous index from selected on-screen menu item
-	MENU_NEXT=0      # following index from selected on-screen menu item
-	NUM_ITEMS=-1     # total items in on-screen menu
-	SELECTED=false   # lets us know when the selected item is printed
-
-	# keep track of screen height to prevent menu from printing off screen
-	TROWS=$(tput lines) && let 'TROWS-=2'
-
-	# loop through each parameter
-	for CURRENT_IDX in ${DATA_INDEXES[@]}; do
-		ITEM=${INDATA[$CURRENT_IDX]}
-
-		let 'NUM_ITEMS+=1'
-		
-		# this will trigger one line after printing the selected row
-		$SELECTED && [[ $MENU_NEXT == 0 ]] && MENU_NEXT=$CURRENT_IDX && NEXT_ITEM=$ITEM
-
-		# if the selected item is filtered out, select the next available item
-		! $SELECTED && [[ $CURRENT_IDX -gt $SELECTED_IDX ]] && SELECTED_IDX=$CURRENT_IDX
-
-		# if the selected item and all items after it are filtered out, select the final item
-		! $SELECTED && [[ $CURRENT_IDX -eq ${DATA_INDEXES[-1]} ]] && SELECTED_IDX=$CURRENT_IDX
-		
-		# check if this item is currently selected
-		if [[ $CURRENT_IDX == $SELECTED_IDX ]];	then
-			# set some useful indexes centered around the selected item
-			SELECTED_ITEM=$ITEM
-			MENU_IDX=$NUM_ITEMS
-			MENU_PREV=$PREV_IDX
-			# this will set MENU_NEXT when printing the following row
-			SELECTED=true
-		fi		
-		# the current values are saved as the previous values
-		PREV_ITEM=$ITEM
-		PREV_PREV_IDX=$PREV_IDX
-		PREV_IDX=$CURRENT_IDX
-
-		# stop printing if screen is full
-		[[ $NUM_ITEMS == $TROWS ]] && break
-	done
-
-	# check if the menu has no items
-	if [[ $NUM_ITEMS == -1 ]]; then
-		SELECTED_ITEM=''
-		SELECTED_IDX=0
-		MENU_IDX=0
-	fi
+print_search () {
+	prs '\e[H\r%s\e[K' $prompt$searchtext
 }
 
-GET_KEY () {
+print_selected () {
+	print_menu
+}
 
-	# flush stdin
-	read -s -t.001 stdin </dev/tty
+get_indexes () {
+	indexes=()
+	while read idx; do
+		[[ "$idx" == 'done' ]] && break
+		indexes+=($idx)
+	done < $index_file
+}
 
-	# wait for user to hit a key
-	read -sn1 key </dev/tty
+get_menu_index () {
+	read select_menu_idx < $select_file
+}
 
-	# read the remaining characters for a special key
-	read -s -t.001 extra </dev/tty
+save_menu_index () {
+	[[ -e $select_file ]] && rm $select_file
+	echo "$select_menu_idx" > $select_file
+}
 
-	key=$key$extra
+update_filter () {
+	kill $filter_proc 2>/dev/null
+	filter_search &
+	filter_proc=$!
+}
+
+# Main():
+filter_search
+loop=true
+while $loop; do
+	# wait for user input	#print_search
+	read -s -N 1 </dev/tty
 	
-	case "$key" in
-		#up arrow
-		($'\x1b[A'|$'\x1bOA')
-			if [[ $MENU_IDX -gt 0 ]]; then
-				wait $!
-				DESELECT_ITEM
-				let 'MENU_IDX-=1'
-				SELECTED_IDX=${DATA_INDEXES[$MENU_IDX]}
-				SELECTED_ITEM=${INDATA[$SELECTED_IDX]}
-				SELECT_ITEM
+	case $REPLY in
+	# ESC
+	($'\x1b')
+		# Grab any additional input for escape characters
+		read -s -t.001 </dev/tty
+		case $REPLY in
+		# Up arrow
+		('[A'|'OA')
+			wait $filter_proc
+			get_indexes
+			get_menu_index
+			if [[ $select_menu_idx -gt 0 ]]; then
+				let 'select_menu_idx-=1'
+				save_menu_index
+				select_idx=${indexes[$select_menu_idx]}
+				print_selected
 			fi
 		;;
-		# down arrow
-		($'\x1b[B'|$'\x1bOB')
-			if [[ $MENU_IDX -lt $NUM_ITEMS ]]; then
-				wait $!
-				DESELECT_ITEM
-				let 'MENU_IDX+=1'
-				SELECTED_IDX=${DATA_INDEXES[$MENU_IDX]}
-				SELECTED_ITEM=${INDATA[$SELECTED_IDX]}
-				SELECT_ITEM
+		# Down arrow
+		('[B'|'OB')
+			wait $filter_proc
+			get_indexes
+			get_menu_index
+			if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
+				let 'select_menu_idx+=1'
+				save_menu_index
+				select_idx=${indexes[$select_menu_idx]}
+				print_selected
 			fi
 		;;
 		# ESC
-		($'\x1b')
-			loop=false
-			SELECTED_ITEM=''
-		;;
-		# DEL
-		($'\x1b[P')
-			if [[ ! -z $SEARCH_TEXT ]]; then
-				SEARCH_TEXT=''
-				PRINT_SEARCH
-				DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
-				DESELECT_ITEM
-				GET_INDEXES
-				REPRINT
-			fi
-		;;
-		# Backspace
-		($'\x08'|$'\x7f')
-			if [[ ! -z $SEARCH_TEXT ]]; then
-				SEARCH_TEXT=${SEARCH_TEXT::-1}
-				PRINT_SEARCH
-				DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
-				DESELECT_ITEM
-				SEARCH_FILTER
-				GET_INDEXES
-				REPRINT
-			fi
-		;;
-		# enter
 		('')
 			loop=false
+			select_item=''
 		;;
-		# other chars
-		(*)
-			if [[ ${#key} == 1 ]]; then
-				SEARCH_TEXT=$SEARCH_TEXT$key
-				prs '%s' $key
-				DESELECT_ITEM
-				SEARCH_FILTER
-				GET_INDEXES
-				REPRINT
-			fi
-		;;
+		esac
+	;;
+	# Backspace
+	($'\x7f')
+		if [[ ! -z $searchtext ]]; then 
+			searchtext=${searchtext::-1}
+			wait $filter_proc
+			get_indexes
+			get_menu_index
+			[[ ! -z $indexes ]] && select_menu_idx=${indexes[$select_menu_idx]} || select_menu_idx=0
+			select_idx=$select_menu_idx
+			save_menu_index
+			indexes=( ${original_indexes[@]} )
+			update_filter
+		fi
+	;;
+	# Enter
+	($'\n')
+		loop=false
+		wait $filter_proc
+		get_indexes
+		get_menu_index
+		[[ ! -z $indexes ]] && select_item="${stdin[${indexes[$select_menu_idx]}]}"
+	;;
+	(*)
+		searchtext=$searchtext$REPLY
+		update_filter
+	;;
 	esac
-}
-
-REPRINT () {
-	kill $! 2>/dev/null
-	PRINT_MENU &
-}
-
-SEARCH_FILTER () {
-
-	# list of indexes to return
-	FILTERED=()
-	STARTING_SEARCH_TEXT=$SEARCH_TEXT
-
-	SEARCH_AGAIN=true
-	while $SEARCH_AGAIN; do
-		SEARCH_AGAIN=false
-
-		# compare input against the search string
-		for idx in ${DATA_INDEXES[@]}; do
-			[[ $(echo ${INDATA[$idx]} | grep "$SEARCH_TEXT") ]] && FILTERED+=($idx)
-
-			# try to detect key presses while filtering
-			key=''
-			extra=''
-			read -s -N1 -t.001 key </dev/tty
-			read -s -t.001 extra </dev/tty
-			key=$key$extra
-			
-			case $key in
-				# Backspace  # TODO: get this to work consistently
-				($'\x08'|$'\x7f'|$'\177')
-					if [[ ! -z $SEARCH_TEXT ]]; then
-						if [[ $SEARCH_TEXT == $STARTING_SEARCH_TEXT ]]; then
-							DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
-							STARTING_SEARCH_TEXT=''
-						fi
-						SEARCH_TEXT=${SEARCH_TEXT::-1}
-						SEARCH_AGAIN=true
-						FILTERED=()
-						PRINT_SEARCH
-						break
-					fi
-				;;
-				# ESC
-				($'\x1b')
-					loop=false
-					SELECTED_ITEM=''
-					break
-				;;
-				# DEL
-				($'\x1b[P')
-					if [[ ! -z $SEARCH_TEXT ]]; then
-						SEARCH_TEXT=''
-						DATA_INDEXES=( "${SEARCH_HISTORY[@]}" )
-						SEARCH_AGAIN=true
-						FILTERED=()
-						PRINT_SEARCH
-						break
-					fi
-				;;
-				# enter
-				($'\x0a')
-					loop=false
-				;;
-				(*)
-					# don't wait for filter to finish
-					if [[ ${#key} == 1 ]]; then
-						SEARCH_TEXT=$SEARCH_TEXT$key
-						# start over using updated search string
-						SEARCH_AGAIN=true
-						FILTERED=()
-						PRINT_SEARCH
-						break
-					fi
-				;;
-			esac
-		done
-	done
-	# now we use the filtered list to display and select items
-	DATA_INDEXES=( ${FILTERED[@]} )
-}
-
-# loop until the user presses Enter or ESC
-loop=true
-GET_INDEXES
-PRINT_MENU
-while $loop; do
-	GET_KEY
+	
 done
 
-kill $! 2>/dev/null
+kill $filter_proc 2>/dev/null
+
 prs '\e[?47l'  # restore screen
 prs '\e[u'     # restore cursor
 
-# print result
-echo "$SELECTED_ITEM"
+echo "$select_item"
+
+
+
