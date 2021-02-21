@@ -18,8 +18,8 @@ fi
 
 original_indexes=( ${indexes[@]} )
 
-prs '\e[s'     # save cursor
-prs '\e[?47h'  # save screen
+tput smcup     # save current screen state
+
 prs '\e[H'     # move cursor to top of screen
 
 IFS=''
@@ -194,8 +194,8 @@ done
 
 kill $filter_proc 2>/dev/null
 
-prs '\e[?47l'  # restore screen
-prs '\e[u'     # restore cursor
+# restore screen to previous state, or clear it if terminal does not support screen restoration
+tput rmcup || prs '\e[H\r\e[J'
 
 echo "$select_item"
 
