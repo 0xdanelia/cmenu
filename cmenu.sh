@@ -18,8 +18,8 @@ fi
 
 original_indexes=( ${indexes[@]} )
 
-tput smcup     # save current screen state
-
+prs '\e[s'     # save cursor
+prs '\e[?47h'  # save screen
 prs '\e[H'     # move cursor to top of screen
 
 IFS=''
@@ -30,8 +30,10 @@ select_idx=0
 select_menu_idx=0
 select_item=''
 
+index_cache_num=0
 index_file='.cmenu_indexes'
 select_file='.cmenu_select'
+menu_file='.cmenu_menu'
 
 clr_select='\e[44m\e[37m'
 clr_default='\e[40m\e[37m'
@@ -40,28 +42,66 @@ filter_proc=''
 print_proc=''
 
 filter_search () {
+	get_select_index
+	selected=false
 	prev_idx=-1
 	count=-1
+	filename="$index_file$index_cache_num"
+	[[ -e $filename ]] && rm $filename
+	
+	if [[ $index_cache_num -gt 0 ]]; then
+		# read from previous cache of indexes
+		prev_filename="$index_file$(($index_cache_num-1))"
+		while read idx; do
+			[[ "$idx" == "done" ]] && break
+			filter_check
+		done < $prev_filename
+	else
+		# no previous cache so read from original input
+		for idx in ${original_indexes[@]}; do
+			filter_check
+		done
+	fi
 
-	[[ -e $index_file ]] && rm $index_file
-	for idx in ${indexes[@]}; do
-		if [[ $(echo ${stdin[$idx]} | grep "$searchtext") ]]; then
-			let 'count+=1'
-			# keep track of the item before the selected item
-			[[ $idx == $select_idx ]] && select_menu_idx=$count
-			 echo $idx >> $index_file
-			 prev_idx=$idx
-		else
-			# if filter removes selected item from list, select the next available item
-			[[ $idx == $select_idx ]] && let 'select_idx+=1'
-		fi
-	done
-	echo 'done' >> $index_file
+	echo 'done' >> $filename
 
 	# if filter shrinks list past selected item, select the last item
-	[[ $select_idx -gt $prev_idx ]] && select_idx=$prev_idx && select_menu_idx=$count
+	! $selected && select_idx=$prev_idx && select_menu_idx=$count
 
 	save_menu_index
+	save_select_index
+	
+	print_menu
+}
+
+filter_check () {
+	if [[ $(echo ${stdin[$idx]} | grep "$searchtext") ]]; then
+		let 'count+=1'
+		# if filter removes selected item from list, select the next available item
+		! $selected && [[ $idx -gt $select_idx ]] && select_idx=$idx
+		
+		[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
+		 echo $idx >> $filename
+		 prev_idx=$idx
+	fi
+}
+
+filter_prev_search () {
+	get_select_index
+	count=-1
+	filename="$index_file$index_cache_num"
+	next_file="$index_file$(($index_cache_num+1))"
+	[[ -e $next_file ]] && rm $next_file
+	
+	while read idx; do
+		[[ "$idx" == "done" ]] && break
+		let 'count+=1'
+		[[ $select_idx -lt 0 ]] && select_idx=$idx
+		[[ $idx == $select_idx ]] && select_menu_idx=$count
+	done < $filename
+
+	save_menu_index
+	save_select_index
 	
 	print_menu
 }
@@ -71,6 +111,7 @@ print_menu () {
 	count=-1
 	item_width=$(($(tput cols)-2))
 	max_height=$(($(tput lines)-1))
+	filename="$index_file$index_cache_num"
 	
 	cursor_hide
 	prs '\e[H'
@@ -80,7 +121,7 @@ print_menu () {
 		[[ $count == $select_menu_idx ]] && clr_line=$clr_select || clr_line=$clr_default
 		prs '\n%b>%b %s\e[K' $clr_select $clr_line $(echo "${stdin[$idx]}" | cut -c 1-$item_width)
 		[[ $(($count+2)) == $max_height ]] && break
-	done < $index_file
+	done < $filename
 	prs '\n%b\e[0J\e[H' $clr_default
 	print_search
 	cursor_show
@@ -96,29 +137,56 @@ print_selected () {
 }
 
 get_indexes () {
+	filename="$index_file$index_cache_num"
 	indexes=()
 	while read idx; do
 		[[ "$idx" == 'done' ]] && break
 		indexes+=($idx)
-	done < $index_file
+	done < $filename
 }
 
 get_menu_index () {
-	read select_menu_idx < $select_file
+	read select_menu_idx < $menu_file
 }
 
 save_menu_index () {
-	[[ -e $select_file ]] && rm $select_file
-	echo "$select_menu_idx" > $select_file
+	[[ -e $menu_file ]] && rm $menu_file
+	echo "$select_menu_idx" > $menu_file
 }
 
+get_select_index () {
+	read select_idx < $select_file
+}
+
+save_select_index () {
+	[[ -e $select_file ]] && rm $select_file
+	echo "$select_idx" > $select_file
+}
+
+
 update_filter () {
+	let 'index_cache_num+=1'
+	#kill $filter_proc 2>/dev/null
+	#filter_search &
+	queue_update &
+	filter_proc=$!
+}
+
+queue_update () {
+	wait $filter_proc
+	filter_search
+}
+
+revert_filter () {
+	let 'index_cache_num-=1'
 	kill $filter_proc 2>/dev/null
-	filter_search &
+	filter_prev_search &
 	filter_proc=$!
 }
 
 # Main():
+save_select_index
+save_menu_index
 filter_search
 loop=true
 while $loop; do
@@ -133,26 +201,30 @@ while $loop; do
 		case $REPLY in
 		# Up arrow
 		('[A'|'OA')
-			wait $filter_proc
-			get_indexes
-			get_menu_index
-			if [[ $select_menu_idx -gt 0 ]]; then
-				let 'select_menu_idx-=1'
-				save_menu_index
-				select_idx=${indexes[$select_menu_idx]}
-				print_selected
+			if [[ -z $filter_proc ]]; then
+				get_indexes
+				get_menu_index
+				if [[ $select_menu_idx -gt 0 ]]; then
+					let 'select_menu_idx-=1'
+					save_menu_index
+					select_idx=${indexes[$select_menu_idx]}
+					save_select_index
+					print_selected
+				fi
 			fi
 		;;
 		# Down arrow
 		('[B'|'OB')
-			wait $filter_proc
-			get_indexes
-			get_menu_index
-			if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
-				let 'select_menu_idx+=1'
-				save_menu_index
-				select_idx=${indexes[$select_menu_idx]}
-				print_selected
+			if [[ -z $filter_proc ]]; then
+				get_indexes
+				get_menu_index
+				if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
+					let 'select_menu_idx+=1'
+					save_menu_index
+					select_idx=${indexes[$select_menu_idx]}
+					save_select_index
+					print_selected
+				fi
 			fi
 		;;
 		# ESC
@@ -166,23 +238,15 @@ while $loop; do
 	($'\x7f')
 		if [[ ! -z $searchtext ]]; then 
 			searchtext=${searchtext::-1}
-			wait $filter_proc
-			get_indexes
-			get_menu_index
-			[[ ! -z $indexes ]] && select_menu_idx=${indexes[$select_menu_idx]} || select_menu_idx=0
-			select_idx=$select_menu_idx
-			save_menu_index
-			indexes=( ${original_indexes[@]} )
-			update_filter
+			revert_filter
 		fi
 	;;
 	# Enter
 	($'\n')
 		loop=false
 		wait $filter_proc
-		get_indexes
-		get_menu_index
-		[[ ! -z $indexes ]] && select_item="${stdin[${indexes[$select_menu_idx]}]}"
+		get_select_index
+		[[ $select_idx -ge 0 ]] && select_item="${stdin[$select_idx]}"
 	;;
 	(*)
 		searchtext=$searchtext$REPLY
@@ -194,10 +258,7 @@ done
 
 kill $filter_proc 2>/dev/null
 
-# restore screen to previous state, or clear it if terminal does not support screen restoration
-tput rmcup || prs '\e[H\r\e[J'
+prs '\e[?47l'  # restore screen
+prs '\e[u'     # restore cursor
 
 echo "$select_item"
-
-
-
