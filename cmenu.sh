@@ -1,6 +1,6 @@
 #!/bin/bash
 
-prs () { printf $@ > /dev/tty ; }
+prs () { printf $@ > /dev/tty ; }       # prevent printing from being piped to another program
 cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
 
@@ -26,9 +26,10 @@ fi
 original_indexes=( ${indexes[@]} )
 
 #TODO: move useful cursor commands to functions or variables so I don't have to keep looking them up
-prs '\e[s'     # save cursor
-prs '\e[?47h'  # save screen
-prs '\e[H'     # move cursor to top of screen
+#prs '\e[s'     # save cursor
+#prs '\e[?47h'  # save screen
+tput smcup     # save current contents of terminal
+prs '\e[H\e[J' # move cursor to top of screen and clear it
 
 IFS=''
 searchtext=''  # user-typed filter
@@ -36,26 +37,29 @@ prompt=':'
 
 select_idx=0
 select_menu_idx=0
+start_menu_idx=0
 select_item=''
 
 #TODO: move these files to a .cache folder
-index_cache_num=0
-index_file='.cmenu_indexes'
-select_file='.cmenu_select'
-menu_file='.cmenu_menu'
-print_file='.cmenu_print'
+index_cache_num=0            # increment as the filter search string increases
+index_file='.cmenu_indexes'  # combine with $index_cache_num to keep track of filtered indexes
+select_file='.cmenu_select'  # holds the index of the selected item
+menu_file='.cmenu_menu'      # holds the on-screen index of the selected item
+start_file='.cmenu_start'    # holds the index of the first item printed on screen
 
 clr_select='\e[44m\e[37m'
 clr_default='\e[40m\e[37m'
 
-filter_proc=''
-print_proc=''
+filter_proc=''  # pid of background shell that is running the filter
+print_proc=''   # pid of background shell that is printing the menu on screen
 
 filter_search () {
 	get_select_index
+	get_start_index
 	selected=false
 	prev_idx=-1
 	count=-1
+	max_height=$(($(tput lines)-1))
 	filename="$index_file$index_cache_num"
 	rm $filename 2> /dev/null
 	
@@ -87,10 +91,13 @@ filter_search () {
 	# if filter shrinks list past selected item, select the last item
 	! $selected && select_idx=$prev_idx && select_menu_idx=$count
 
+	# make sure newly filtered items print on screen
+	[[ $select_menu_idx -le $max_height ]] && start_menu_idx=0 ||
+	start_menu_idx=$(($select_menu_idx-$max_height+2))
+
 	save_menu_index
 	save_select_index
-	
-	reprint
+	save_start_index
 }
 
 filter_check () {
@@ -136,72 +143,73 @@ filter_prev_search () {
 		echo 'done' >> $filename
 		# if filter shrinks list past selected item, select the first item
 		! $selected && select_idx=0 && select_menu_idx=0
+		[[ $count -lt 0 ]] && select_idx=-1 && select_menu_idx=-1
 	fi
+
+	# make sure newly filtered items print on screen
+	[[ $select_menu_idx -le $max_height ]] && start_menu_idx=0 ||
+	start_menu_idx=$(($select_menu_idx-$max_height+2))
 
 	save_menu_index
 	save_select_index
-	
-	reprint
+	save_start_index
 }
 
 print_menu () {
 	get_menu_index
+	get_select_index
+	get_start_index
 	count=-1
 	item_width=$(($(tput cols)-2))
 	max_height=$(($(tput lines)-1))
 	filename="$index_file$index_cache_num"
 	
 	cursor_hide
-	prs '\e[H'
+	prs '\e[H\e[J'
 	while read idx; do
 		let 'count+=1'
-		[[ "$idx" == 'done' ]] && break
+		[[ "$idx" == 'done' ]] && prs '\n%b\e[0J' $clr_default && break
+		[[ $count -lt $start_menu_idx ]] && continue
 		[[ $count == $select_menu_idx ]] && clr_line=$clr_select || clr_line=$clr_default
 		prs '\n%b>%b %s\e[K' $clr_select $clr_line $(echo "${stdin[$idx]}" | cut -c 1-$item_width)
-		[[ $(($count+2)) == $max_height ]] && break
+		[[ $(($count-$start_menu_idx+2)) == $(($max_height)) ]] && break
 	done < $filename
-	prs '\n%b\e[0J\e[H' $clr_default
 	print_search
-	print_proc=''
-	save_print_proc
 }
 
 print_search () {
-	get_print_proc
-	wait $print_proc 2> /dev/null
+	cursor_hide
 	search_width=$(($(tput cols)-${#prompt}))
-	prs '\e[H\r%s\e[K' $(echo "$prompt$searchtext" | cut -c 1-$search_width)
+	prs '%b\e[H\r%s\e[K' $clr_default $(echo "$prompt$searchtext" | cut -c 1-$search_width)
 	cursor_show
 }
 
 deselect_item () {
-	if [[ $select_menu_idx -ge 0 ]]; then
-		get_select_index
-		get_menu_index
+	get_menu_index
+	get_select_index
+	get_start_index
+	if [[ $select_menu_idx -ge 0 ]] && [[ $select_idx -ge 0 ]]; then
 		cursor_hide
 		# move cursor to selected item
-		prs '\e[%iB' $(( $select_menu_idx + 1 ))
+		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
 		# reprint selected item with default color
 		prs '\r%b>%b %s\e[0K' $clr_select $clr_default $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
-		# move cursor back to top of screen
-		prs '\e[H'
-		# print user-typed text for searching list
+		# return cursor to search text
 		print_search
 	fi
 }
 
 reselect_item () {
-	if [[ $select_menu_idx -ge 0 ]]; then
-		get_select_index
-		get_menu_index
+	get_menu_index
+	get_select_index
+	get_start_index
+	if [[ $select_menu_idx -ge 0 ]] && [[ $select_idx -ge 0 ]]; then
 		cursor_hide
 		# move cursor to selected item
-		prs '\e[%iB' $(( $select_menu_idx + 1 ))
+		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
 		# reprint selected item with default color
 		prs '\r%b> %s\e[0K' $clr_select $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
-		# move cursor back to top of screen
-		prs '%b\e[H' $clr_default
-		# print user-typed text for searching list
+		# return cursor to search text
 		print_search
 	fi
 }
@@ -215,13 +223,23 @@ get_indexes () {
 	done < $filename
 }
 
+#TODO: the get/save functions can be consolidated to one function that takes the variable + filename as input
 get_menu_index () {
 	read select_menu_idx < $menu_file
 }
 
 save_menu_index () {
-	rm $menu_file 2> /dev/null
+	rm $menu_file 2>/dev/null
 	echo "$select_menu_idx" > $menu_file
+}
+
+get_start_index () {
+	read start_menu_idx < $start_file
+}
+
+save_start_index () {
+	rm $start_file 2>/dev/null
+	echo "$start_menu_idx" > $start_file
 }
 
 get_select_index () {
@@ -229,17 +247,8 @@ get_select_index () {
 }
 
 save_select_index () {
-	rm $select_file 2> /dev/null
+	rm $select_file 2>/dev/null
 	echo "$select_idx" > $select_file
-}
-
-get_print_proc () {
-	read print_proc < $print_file
-}
-
-save_print_proc () {
-	rm $print_file 2> /dev/null
-	echo "$print_proc" > $print_file
 }
 
 update_filter () {
@@ -257,18 +266,25 @@ revert_filter () {
 }
 
 reprint () {
-	get_print_proc
-	[[ ! -z $print_proc ]] && kill $print_proc 2>/dev/null
-	print_menu &
+	kill $print_proc 2>/dev/null
+	queue_print &
 	print_proc=$!
-	save_print_proc
+}
+
+queue_print () {
+	# wait for filtering to finish before printing
+	while $(kill -0 $filter_proc 2>/dev/null); do
+		sleep .01
+	done
+	print_menu
 }
 
 # Main():
 save_select_index
 save_menu_index
-save_print_proc
+save_start_index
 filter_search
+print_menu
 loop=true
 while $loop; do
 	# wait for user input	#print_search
@@ -278,39 +294,53 @@ while $loop; do
 	# ESC
 	($'\x1b')
 		# Grab any additional input for escape characters
-		read -s -t.001 </dev/tty
+		read -s -t.0001 </dev/tty
 		case $REPLY in
 		# Up arrow
 		('[A'|'OA')
-			if ! $(kill -0 $filter_proc 2>/dev/null); then
+			if ! $(kill -0 $filter_proc 2>/dev/null) &&
+				! $(kill -0 $print_proc 2>/dev/null); then
 				get_indexes
 				get_menu_index
+				get_start_index
 				if [[ $select_menu_idx -gt 0 ]]; then
-					get_print_proc
-					wait $print_proc 2> /dev/null
 					deselect_item
 					let 'select_menu_idx-=1'
 					save_menu_index
 					select_idx=${indexes[$select_menu_idx]}
 					save_select_index
-					reselect_item
+					max_height=$(($(tput lines)-3))
+					if [[ $select_menu_idx -lt $start_menu_idx ]]; then
+						let 'start_menu_idx-=1'
+						save_start_index
+						reprint
+					else
+						reselect_item
+					fi
 				fi
 			fi
 		;;
 		# Down arrow
 		('[B'|'OB')
-			if ! $(kill -0 $filter_proc 2>/dev/null); then
+			if ! $(kill -0 $filter_proc 2>/dev/null) &&
+				! $(kill -0 $print_proc 2>/dev/null); then
 				get_indexes
 				get_menu_index
+				get_start_index
 				if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
-					get_print_proc
-					wait $print_proc 2> /dev/null
 					deselect_item
 					let 'select_menu_idx+=1'
 					save_menu_index
 					select_idx=${indexes[$select_menu_idx]}
 					save_select_index
-					reselect_item
+					max_height=$(($(tput lines)-3))
+					if [[ $select_menu_idx -gt $(($start_menu_idx+$max_height)) ]]; then
+						let 'start_menu_idx+=1'
+						save_start_index
+						reprint
+					else
+						reselect_item
+					fi
 				fi
 			fi
 		;;
@@ -325,10 +355,9 @@ while $loop; do
 	($'\x7f')
 		if [[ ! -z $searchtext ]]; then 
 			searchtext=${searchtext::-1}
-			get_print_proc
-			kill $print_proc 2>/dev/null
-			deselect_item &
+			deselect_item
 			revert_filter
+			reprint
 		fi
 	;;
 	# Enter
@@ -340,24 +369,22 @@ while $loop; do
 	;;
 	(*)
 		searchtext=$searchtext$REPLY
-		get_print_proc
-		kill $print_proc 2>/dev/null
-		deselect_item &
+		deselect_item
 		update_filter
+		reprint
 	;;
 	esac
 	
 done
 
 kill $filter_proc 2>/dev/null
-get_print_proc
 kill $print_proc 2>/dev/null
 
-#TODO: start backgroun shell to clear cache files
+#TODO: start background shell to clear cache files
 
 #TODO: catch CTRL+C (and other kill commands) and make sure my background shells are stopped
 
-prs '\e[?47l'  # restore screen
-prs '\e[u'     # restore cursor
-
+# restore previous contents of terminal if possible, otherwise clear screen
+tput rmcup || prs '\e[H\e[J'
+# print the results to stdout
 echo "$select_item"
