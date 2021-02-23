@@ -47,15 +47,24 @@ filter_search () {
 	prev_idx=-1
 	count=-1
 	filename="$index_file$index_cache_num"
-	[[ -e $filename ]] && rm $filename
+	rm $filename 2> /dev/null
 	
 	if [[ $index_cache_num -gt 0 ]]; then
 		# read from previous cache of indexes
 		prev_filename="$index_file$(($index_cache_num-1))"
-		while read idx; do
-			[[ "$idx" == "done" ]] && break
-			filter_check
-		done < $prev_filename
+		cache_done=false
+		if [[ -e $prev_filename ]]; then
+			while read idx; do
+				[[ "$idx" == "done" ]] && cache_done=true && break
+				filter_check
+			done < $prev_filename
+		fi
+		# if the filter was interrupted, finish filtering on original input
+		if ! $cache_done; then
+			for (( idx=$(($prev_idx+1)); idx<${#original_indexes[@]}; idx++ )); do
+				filter_check
+			done
+		fi
 	else
 		# no previous cache so read from original input
 		for idx in ${original_indexes[@]}; do
@@ -89,16 +98,29 @@ filter_check () {
 filter_prev_search () {
 	get_select_index
 	count=-1
+	selected=false
 	filename="$index_file$index_cache_num"
 	next_file="$index_file$(($index_cache_num+1))"
-	[[ -e $next_file ]] && rm $next_file
-	
-	while read idx; do
-		[[ "$idx" == "done" ]] && break
-		let 'count+=1'
-		[[ $select_idx -lt 0 ]] && select_idx=$idx
-		[[ $idx == $select_idx ]] && select_menu_idx=$count
-	done < $filename
+	rm $next_file 2> /dev/null
+	cache_done=false
+	if [[ -e $filename ]]; then
+		while read idx; do
+			[[ "$idx" == "done" ]] && cache_done=true && break
+			let 'count+=1'
+			[[ $select_idx -lt 0 ]] && select_idx=$idx
+			[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
+			prev_idx=$idx
+		done < $filename
+	fi
+	# if the filter was interrupted, finish filtering on original input
+	if ! $cache_done; then
+		for (( idx=$(($prev_idx+1)); idx<${#original_indexes[@]}; idx++ )); do
+			filter_check
+		done
+		echo 'done' >> $filename
+		# if filter shrinks list past selected item, select the last item
+		! $selected && select_idx=$prev_idx && select_menu_idx=$count
+	fi
 
 	save_menu_index
 	save_select_index
@@ -166,15 +188,9 @@ save_select_index () {
 
 update_filter () {
 	let 'index_cache_num+=1'
-	#kill $filter_proc 2>/dev/null
-	#filter_search &
-	queue_update &
+	kill $filter_proc 2>/dev/null
+	filter_search &
 	filter_proc=$!
-}
-
-queue_update () {
-	wait $filter_proc
-	filter_search
 }
 
 revert_filter () {
@@ -201,7 +217,7 @@ while $loop; do
 		case $REPLY in
 		# Up arrow
 		('[A'|'OA')
-			if [[ -z $filter_proc ]]; then
+			if ! $(kill -0 $filter_proc 2>/dev/null); then
 				get_indexes
 				get_menu_index
 				if [[ $select_menu_idx -gt 0 ]]; then
@@ -215,7 +231,7 @@ while $loop; do
 		;;
 		# Down arrow
 		('[B'|'OB')
-			if [[ -z $filter_proc ]]; then
+			if ! $(kill -0 $filter_proc 2>/dev/null); then
 				get_indexes
 				get_menu_index
 				if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
