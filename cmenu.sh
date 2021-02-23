@@ -5,7 +5,7 @@ cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
 
 stdin=()    # strings of input text
-indexes=()  # indexes of menu items
+indexes=()  # indexes of menu items  #TODO: since indexes are read from files, do we need this variable?
 # read piped input
 if test ! -t 0; then
 	count=0
@@ -16,8 +16,16 @@ if test ! -t 0; then
 	done
 fi
 
+#TODO: read ARGS for special options
+# -p  set custom prompt
+# -i  use case-insensitive filtering
+# -c  set highlight color (possibly?)
+# -l  set max menu rows to display on screen
+# -s  display menu in-line instead of clearing terminal screen first
+
 original_indexes=( ${indexes[@]} )
 
+#TODO: move useful cursor commands to functions or variables so I don't have to keep looking them up
 prs '\e[s'     # save cursor
 prs '\e[?47h'  # save screen
 prs '\e[H'     # move cursor to top of screen
@@ -30,6 +38,7 @@ select_idx=0
 select_menu_idx=0
 select_item=''
 
+#TODO: move these files to a .cache folder
 index_cache_num=0
 index_file='.cmenu_indexes'
 select_file='.cmenu_select'
@@ -153,7 +162,6 @@ print_menu () {
 	done < $filename
 	prs '\n%b\e[0J\e[H' $clr_default
 	print_search
-	cursor_show
 	print_proc=''
 	save_print_proc
 }
@@ -163,10 +171,39 @@ print_search () {
 	wait $print_proc 2> /dev/null
 	search_width=$(($(tput cols)-${#prompt}))
 	prs '\e[H\r%s\e[K' $(echo "$prompt$searchtext" | cut -c 1-$search_width)
+	cursor_show
 }
 
-print_selected () {
-	reprint
+deselect_item () {
+	if [[ $select_menu_idx -ge 0 ]]; then
+		get_select_index
+		get_menu_index
+		cursor_hide
+		# move cursor to selected item
+		prs '\e[%iB' $(( $select_menu_idx + 1 ))
+		# reprint selected item with default color
+		prs '\r%b>%b %s\e[0K' $clr_select $clr_default $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
+		# move cursor back to top of screen
+		prs '\e[H'
+		# print user-typed text for searching list
+		print_search
+	fi
+}
+
+reselect_item () {
+	if [[ $select_menu_idx -ge 0 ]]; then
+		get_select_index
+		get_menu_index
+		cursor_hide
+		# move cursor to selected item
+		prs '\e[%iB' $(( $select_menu_idx + 1 ))
+		# reprint selected item with default color
+		prs '\r%b> %s\e[0K' $clr_select $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
+		# move cursor back to top of screen
+		prs '%b\e[H' $clr_default
+		# print user-typed text for searching list
+		print_search
+	fi
 }
 
 get_indexes () {
@@ -249,11 +286,14 @@ while $loop; do
 				get_indexes
 				get_menu_index
 				if [[ $select_menu_idx -gt 0 ]]; then
+					get_print_proc
+					wait $print_proc 2> /dev/null
+					deselect_item
 					let 'select_menu_idx-=1'
 					save_menu_index
 					select_idx=${indexes[$select_menu_idx]}
 					save_select_index
-					print_selected
+					reselect_item
 				fi
 			fi
 		;;
@@ -263,11 +303,14 @@ while $loop; do
 				get_indexes
 				get_menu_index
 				if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
+					get_print_proc
+					wait $print_proc 2> /dev/null
+					deselect_item
 					let 'select_menu_idx+=1'
 					save_menu_index
 					select_idx=${indexes[$select_menu_idx]}
 					save_select_index
-					print_selected
+					reselect_item
 				fi
 			fi
 		;;
@@ -282,7 +325,9 @@ while $loop; do
 	($'\x7f')
 		if [[ ! -z $searchtext ]]; then 
 			searchtext=${searchtext::-1}
-			print_search &
+			get_print_proc
+			kill $print_proc 2>/dev/null
+			deselect_item &
 			revert_filter
 		fi
 	;;
@@ -295,7 +340,9 @@ while $loop; do
 	;;
 	(*)
 		searchtext=$searchtext$REPLY
-		print_search &
+		get_print_proc
+		kill $print_proc 2>/dev/null
+		deselect_item &
 		update_filter
 	;;
 	esac
@@ -305,6 +352,10 @@ done
 kill $filter_proc 2>/dev/null
 get_print_proc
 kill $print_proc 2>/dev/null
+
+#TODO: start backgroun shell to clear cache files
+
+#TODO: catch CTRL+C (and other kill commands) and make sure my background shells are stopped
 
 prs '\e[?47l'  # restore screen
 prs '\e[u'     # restore cursor
