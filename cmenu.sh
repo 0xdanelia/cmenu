@@ -117,6 +117,7 @@ filter_prev_search () {
 	count=-1
 	prev_idx=-1
 	selected=false
+	max_height=$(($(tput lines)-1))
 	filename="$index_file$index_cache_num"
 	next_file="$index_file$(($index_cache_num+1))"
 	rm $next_file 2> /dev/null
@@ -142,7 +143,7 @@ filter_prev_search () {
 		done
 		echo 'done' >> $filename
 		# if filter shrinks list past selected item, select the first item
-		! $selected && select_idx=0 && select_menu_idx=0
+		! $selected && select_idx=$prev_idx && select_menu_idx=$count
 		[[ $count -lt 0 ]] && select_idx=-1 && select_menu_idx=-1
 	fi
 
@@ -194,9 +195,9 @@ deselect_item () {
 		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
 		# reprint selected item with default color
 		prs '\r%b>%b %s\e[0K' $clr_select $clr_default $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
-		# return cursor to search text
-		print_search
 	fi
+	# return cursor to search text
+	print_search
 }
 
 reselect_item () {
@@ -209,9 +210,9 @@ reselect_item () {
 		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
 		# reprint selected item with default color
 		prs '\r%b> %s\e[0K' $clr_select $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
-		# return cursor to search text
-		print_search
 	fi
+	# return cursor to search text
+	print_search
 }
 
 get_indexes () {
