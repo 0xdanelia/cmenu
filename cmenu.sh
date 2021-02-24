@@ -4,16 +4,27 @@ prs () { printf $@ > /dev/tty ; }       # prevent printing from being piped to a
 cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
 
+#TODO: move these files to a .cache folder
+index_cache_num=0            # increment as the filter search string increases
+index_file='.cmenu_indexes'  # combine with $index_cache_num to keep track of filtered indexes
+select_file='.cmenu_select'  # holds the index of the selected item
+menu_file='.cmenu_menu'      # holds the on-screen index of the selected item
+start_file='.cmenu_start'    # holds the index of the first item printed on screen
+
 stdin=()    # strings of input text
 indexes=()  # indexes of menu items  #TODO: since indexes are read from files, do we need this variable?
 # read piped input
 if test ! -t 0; then
+	filename="$index_file$index_cache_num"
+	rm $filename 2>/dev/null
 	count=0
 	while read -rs inline; do
 		stdin+=("$inline")
 		indexes+=($count)
+		echo "$count" >> $filename
 		let 'count+=1'
 	done
+	echo "done" >> $filename
 fi
 
 #TODO: read ARGS for special options
@@ -39,19 +50,13 @@ select_idx=0
 select_menu_idx=0
 start_menu_idx=0
 select_item=''
-
-#TODO: move these files to a .cache folder
-index_cache_num=0            # increment as the filter search string increases
-index_file='.cmenu_indexes'  # combine with $index_cache_num to keep track of filtered indexes
-select_file='.cmenu_select'  # holds the index of the selected item
-menu_file='.cmenu_menu'      # holds the on-screen index of the selected item
-start_file='.cmenu_start'    # holds the index of the first item printed on screen
+need_index_refresh=false
 
 clr_select='\e[44m\e[37m'
 clr_default='\e[40m\e[37m'
 
-filter_proc=''  # pid of background shell that is running the filter
-print_proc=''   # pid of background shell that is printing the menu on screen
+filter_proc=  # pid of background shell that is running the filter
+print_proc=   # pid of background shell that is printing the menu on screen
 
 filter_search () {
 	get_select_index
@@ -216,12 +221,15 @@ reselect_item () {
 }
 
 get_indexes () {
-	filename="$index_file$index_cache_num"
-	indexes=()
-	while read idx; do
-		[[ "$idx" == 'done' ]] && break
-		indexes+=($idx)
-	done < $filename
+	if $need_index_refresh; then
+		filename="$index_file$index_cache_num"
+		indexes=()
+		while read idx; do
+			[[ "$idx" == 'done' ]] && break
+			indexes+=($idx)
+		done < $filename
+		need_index_refresh=false
+	fi
 }
 
 #TODO: the get/save functions can be consolidated to one function that takes the variable + filename as input
@@ -274,7 +282,7 @@ reprint () {
 
 queue_print () {
 	# wait for filtering to finish before printing
-	while $(kill -0 $filter_proc 2>/dev/null); do
+	while [[ ! -z $filter_proc ]] && $(kill -0 $filter_proc 2>/dev/null); do
 		sleep .01
 	done
 	print_menu
@@ -284,8 +292,7 @@ queue_print () {
 save_select_index
 save_menu_index
 save_start_index
-filter_search
-print_menu
+reprint
 loop=true
 while $loop; do
 	# wait for user input	#print_search
@@ -356,6 +363,7 @@ while $loop; do
 	($'\x7f')
 		if [[ ! -z $searchtext ]]; then 
 			searchtext=${searchtext::-1}
+			need_index_refresh=true
 			deselect_item
 			revert_filter
 			reprint
@@ -370,6 +378,7 @@ while $loop; do
 	;;
 	(*)
 		searchtext=$searchtext$REPLY
+		need_index_refresh=true
 		deselect_item
 		update_filter
 		reprint
