@@ -1,11 +1,11 @@
 #!/bin/bash
 
 prompt=':'
+clr_select='\e[44m\e[37m' # white text with blue highlight
+clr_default='\e[0m\e[0m'
+filter_func () { grep -F "$searchtext" ;}
 
-#TODO: read ARGS for special options
-# -p  set custom prompt
-# -i  use case-insensitive filtering
-# -c  set highlight color (possibly?)
+#TODO: special args to add:
 # -l  set max menu rows to display on screen
 # -s  display menu in-line instead of clearing terminal screen first
 
@@ -14,8 +14,11 @@ for arg in "$@";
 do
 	if [[ ! -z $arg_flag ]]; then
 		case "$arg_flag" in
-		('-p')
+		('-p')  # set prompt text
 			prompt="$arg"
+		;;
+		('-c')  # set highlight color (using ANSI escape codes)
+			clr_select="$arg"
 		;;
 		(*)
 			echo "Could not parse argument $arg_flag"
@@ -28,8 +31,17 @@ do
 	fi
 
 	case "$arg" in
-	('-p')
+	('-p'|'-c')
 		arg_flag=$arg
+	;;
+	('-c1'|'-c2'|'-c3'|'-c4')  # preset custom highlight colors
+		[[ "$arg" == "-c1" ]] && clr_select='\e[30m\e[47m'  # black on white
+		[[ "$arg" == "-c2" ]] && clr_select='\e[34m\e[42m'  # blue on green
+		[[ "$arg" == "-c3" ]] && clr_select='\e[30m\e[43m'  # black on yellow
+		[[ "$arg" == "-c4" ]] && clr_select='\e[37m\e[41m'  # white on red 
+	;;
+	('-i')
+		filter_func () { grep -F -i "$searchtext" ;}
 	;;
 	(*)
 		echo "Could not parse argument $arg"
@@ -96,9 +108,6 @@ select_item=''
 need_index_refresh=false
 need_deselect=false
 
-clr_select='\e[44m\e[37m'
-clr_default='\e[40m\e[37m'
-
 filter_proc=  # pid of background shell that is running the filter
 print_proc=   # pid of background shell that is printing the menu on screen
 
@@ -150,7 +159,7 @@ filter_search () {
 }
 
 filter_check () {
-	if [[ $(echo ${stdin[$idx]} | grep -F "$searchtext") ]]; then
+	if [[ $(echo ${stdin[$idx]} | filter_func) ]]; then
 		let 'count+=1'
 		# if filter removes selected item from list, select the next available item
 		! $selected && [[ $idx -gt $select_idx ]] && select_idx=$idx
@@ -183,7 +192,7 @@ filter_prev_search () {
 	# if the filter was interrupted, finish filtering on original input
 	if ! $cache_done; then
 		for (( idx=$(($prev_idx+1)); idx<${#original_indexes[@]}; idx++ )); do
-			if [[ $(echo ${stdin[$idx]} | grep -F "$searchtext") ]]; then
+			if [[ $(echo ${stdin[$idx]} | filter_func) ]]; then
 				let 'count+=1'				
 				[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
 				 echo $idx >> $filename
@@ -437,7 +446,7 @@ while $loop; do
 		select_item=''
 	;;
 	# Backspace
-	($'\x7f')
+	($'\x7f'|'\b')
 		if [[ ! -z $searchtext ]]; then 
 			searchtext="${searchtext::-1}"
 			need_index_refresh=true
@@ -454,7 +463,8 @@ while $loop; do
 		[[ $select_idx -ge 0 ]] && select_item="${stdin[$select_idx]}"
 	;;
 	(*)
-		if [[ ! -z $key ]] && [[ ${#key} == 1 ]]; then
+		# make sure key is not a control character
+		if [[ ! -z $key ]] && [[ ! $key =~ [[:cntrl:]] ]]; then
 			searchtext="$searchtext$key"
 			need_index_refresh=true
 			need_deselect=true
