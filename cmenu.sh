@@ -4,12 +4,23 @@ prs () { printf $@ > /dev/tty ; }       # prevent printing from being piped to a
 cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
 
-#TODO: move these files to a .cache folder
-index_cache_num=0            # increment as the filter search string increases
-index_file='.cmenu_indexes'  # combine with $index_cache_num to keep track of filtered indexes
-select_file='.cmenu_select'  # holds the index of the selected item
-menu_file='.cmenu_menu'      # holds the on-screen index of the selected item
-start_file='.cmenu_start'    # holds the index of the first item printed on screen
+# directory to store files so the $filter_proc and $print_proc background shells can communicate
+cache_dir=~/.cache/cmenu/active_
+# use a unique identifier for this cache so other instances of cmenu do not conflict
+cache_ID=$$$(date +%s%N) # process id + seconds + nanoseconds
+while [[ -e $cache_dir$cache_ID ]]; do
+	cache_ID=$$$(date +%s%N)
+done
+cache_dir=$cache_dir$cache_ID
+mkdir -p $cache_dir
+# old cache directories are flagged for deletion 
+cache_to_delete_dir=~/.cache/cmenu/to_delete_
+# cache files
+index_cache_num=0                      # increment as the filter search string increases
+index_file="$cache_dir/cmenu_indexes"  # combine with $index_cache_num to keep track of filtered indexes
+select_file="$cache_dir/cmenu_select"  # holds the index of the selected item
+menu_file="$cache_dir/cmenu_menu"      # holds the on-screen index of the selected item
+start_file="$cache_dir/cmenu_start"    # holds the index of the first item printed on screen
 
 stdin=()    # strings of input text
 indexes=()  # indexes of menu items  #TODO: since indexes are read from files, do we need this variable?
@@ -390,7 +401,9 @@ done
 kill $filter_proc 2>/dev/null
 kill $print_proc 2>/dev/null
 
-#TODO: start background shell to clear cache files
+# start background shell to clear old cache files
+[[ -e $cache_dir ]] && mv $cache_dir $cache_to_delete_dir$cache_ID
+rm -rf $cache_to_delete_dir* &
 
 #TODO: catch CTRL+C (and other kill commands) and make sure my background shells are stopped
 
