@@ -192,6 +192,8 @@ print_menu () {
 		prs '\n%b>%b %s\e[K' $clr_select $clr_line $(echo "${stdin[$idx]}" | cut -c 1-$item_width)
 		[[ $(($count-$start_menu_idx+2)) == $(($max_height)) ]] && break
 	done < $filename
+	# clear the progress bar
+	prs '%b\e[\r%iB\e[K' $clr_default $max_height
 	print_search
 }
 
@@ -248,7 +250,7 @@ get_indexes () {
 
 #TODO: the get/save functions can be consolidated to one function that takes the variable + filename as input
 get_menu_index () {
-	read select_menu_idx < $menu_file
+	read select_menu_idx2 >/dev/null < $menu_file
 }
 
 save_menu_index () {
@@ -257,7 +259,7 @@ save_menu_index () {
 }
 
 get_start_index () {
-	read start_menu_idx < $start_file
+	read start_menu_idx 2>/dev/null < $start_file
 }
 
 save_start_index () {
@@ -266,7 +268,7 @@ save_start_index () {
 }
 
 get_select_index () {
-	read select_idx < $select_file
+	read select_idx 2>/dev/null < $select_file
 }
 
 save_select_index () {
@@ -290,14 +292,41 @@ revert_filter () {
 
 reprint () {
 	kill $print_proc 2>/dev/null
+	max_height=$(($(tput lines)-1))
+	prs '%b\e[\r%iB\e[K\e[H' $clr_default $max_height
+	deselect_item
 	queue_print &
 	print_proc=$!
 }
 
 queue_print () {
 	# wait for filtering to finish before printing
+	dots=''
+	next_dot=' .'
+	dot_time=0
+	dot_cycle=1
 	while [[ ! -z $filter_proc ]] && $(kill -0 $filter_proc 2>/dev/null); do
 		sleep .01
+		# print some 'in progress' dots to tell the user things are working
+		let 'dot_time+=1'
+		if [[ $dot_time == 10 ]]; then
+			dot_time=0
+			if [[ ${#dots} -ge 6 ]]; then
+				dots=''
+				if [[ $dot_cycle == 1 ]]; then
+					next_dot='  '
+					dot_cycle=0
+				else
+					next_dot=' .'
+					dot_cycle=1
+				fi
+			fi
+			dots=$dots$next_dot
+			max_height=$(($(tput lines)-1))
+			cursor_hide
+			prs '%b\e[\r%iB%s' $clr_default $max_height $dots
+			print_search
+		fi
 	done
 	print_menu
 }
@@ -309,82 +338,73 @@ save_start_index
 reprint
 loop=true
 while $loop; do
-	# flush stdin
-	read -s -r -t.001 </dev/tty
 	# wait for user input
-	read -s -r -N 1 </dev/tty
+	read -s -N 1 key  </dev/tty
+	# get additional input for escape characters
+	while read -s -t0 </dev/tty; do
+		read -s -N 1 </dev/tty
+		key=$key$REPLY
+	done
 	# parse input
-	case $REPLY in
+	case $key in
+	# Up arrow
+	($'\x1b[A'|$'\x1bOA')
+		if ! $(kill -0 $filter_proc 2>/dev/null) &&
+			! $(kill -0 $print_proc 2>/dev/null); then
+			get_indexes
+			get_menu_index
+			get_start_index
+			if [[ $select_menu_idx -gt 0 ]]; then
+				max_height=$(($(tput lines)-3))
+				[[ $select_menu_idx -lt $(($start_menu_idx+1)) ]] || deselect_item
+				let 'select_menu_idx-=1'
+				save_menu_index
+				select_idx=${indexes[$select_menu_idx]}
+				save_select_index
+				if [[ $select_menu_idx -lt $start_menu_idx ]]; then
+					let 'start_menu_idx-=1'
+					save_start_index
+					reprint
+				else
+					reselect_item
+				fi
+			fi
+		fi
+	;;
+	# Down arrow
+	($'\x1b[B'|$'\x1bOB')
+		if ! $(kill -0 $filter_proc 2>/dev/null) &&
+			! $(kill -0 $print_proc 2>/dev/null); then
+			get_indexes
+			get_menu_index
+			get_start_index
+			if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
+				max_height=$(($(tput lines)-3))
+				[[ $select_menu_idx -gt $(($start_menu_idx+$max_height-1)) ]] || deselect_item
+				let 'select_menu_idx+=1'
+				save_menu_index
+				select_idx=${indexes[$select_menu_idx]}
+				save_select_index
+				if [[ $select_menu_idx -gt $(($start_menu_idx+$max_height)) ]]; then
+					let 'start_menu_idx+=1'
+					save_start_index
+					reprint
+				else
+					reselect_item
+				fi
+			fi
+		fi
+	;;
 	# ESC
 	($'\x1b')
-		# Grab any additional input for escape characters
-		read -s -r -t.001 </dev/tty
-		case $REPLY in
-		# Up arrow
-		('[A'|'OA')
-			if ! $(kill -0 $filter_proc 2>/dev/null) &&
-				! $(kill -0 $print_proc 2>/dev/null); then
-				get_indexes
-				get_menu_index
-				get_start_index
-				if [[ $select_menu_idx -gt 0 ]]; then
-					max_height=$(($(tput lines)-3))
-					[[ $select_menu_idx -lt $(($start_menu_idx+1)) ]] || deselect_item
-					let 'select_menu_idx-=1'
-					save_menu_index
-					select_idx=${indexes[$select_menu_idx]}
-					save_select_index
-					if [[ $select_menu_idx -lt $start_menu_idx ]]; then
-						let 'start_menu_idx-=1'
-						save_start_index
-						reprint
-					else
-						reselect_item
-					fi
-				fi
-			fi
-		;;
-		# Down arrow
-		('[B'|'OB')
-			if ! $(kill -0 $filter_proc 2>/dev/null) &&
-				! $(kill -0 $print_proc 2>/dev/null); then
-				get_indexes
-				get_menu_index
-				get_start_index
-				if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
-					max_height=$(($(tput lines)-3))
-					[[ $select_menu_idx -gt $(($start_menu_idx+$max_height-1)) ]] || deselect_item
-					let 'select_menu_idx+=1'
-					save_menu_index
-					select_idx=${indexes[$select_menu_idx]}
-					save_select_index
-					if [[ $select_menu_idx -gt $(($start_menu_idx+$max_height)) ]]; then
-						let 'start_menu_idx+=1'
-						save_start_index
-						reprint
-					else
-						reselect_item
-					fi
-				fi
-			fi
-		;;
-		# ESC
-		('')
-			# make sure there isn't any other input
-			read -s -r -t.001 </dev/tty
-			if [[ -z $REPLY ]]; then
-				loop=false
-				select_item=''
-			fi
-		;;
-		esac
+		loop=false
+		select_item=''
 	;;
 	# Backspace
 	($'\x7f')
 		if [[ ! -z $searchtext ]]; then 
 			searchtext="${searchtext::-1}"
 			need_index_refresh=true
-			deselect_item
 			revert_filter
 			reprint
 		fi
@@ -397,18 +417,17 @@ while $loop; do
 		[[ $select_idx -ge 0 ]] && select_item="${stdin[$select_idx]}"
 	;;
 	(*)
-		if [[ ${#REPLY} == 1 ]]; then
-			searchtext="$searchtext$REPLY"
+		if [[ ! -z $key ]] && [[ ${#key} == 1 ]]; then
+			searchtext="$searchtext$key"
 			need_index_refresh=true
-			deselect_item
 			update_filter
 			reprint
 		fi
 	;;
 	esac
-	
 done
 
+# kill any in-progress background shells
 kill $filter_proc 2>/dev/null
 kill $print_proc 2>/dev/null
 
