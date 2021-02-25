@@ -117,7 +117,7 @@ filter_search () {
 }
 
 filter_check () {
-	if [[ $(echo ${stdin[$idx]} | grep "$searchtext") ]]; then
+	if [[ $(echo ${stdin[$idx]} | grep -F "$searchtext") ]]; then
 		let 'count+=1'
 		# if filter removes selected item from list, select the next available item
 		! $selected && [[ $idx -gt $select_idx ]] && select_idx=$idx
@@ -150,7 +150,7 @@ filter_prev_search () {
 	# if the filter was interrupted, finish filtering on original input
 	if ! $cache_done; then
 		for (( idx=$(($prev_idx+1)); idx<${#original_indexes[@]}; idx++ )); do
-			if [[ $(echo ${stdin[$idx]} | grep "$searchtext") ]]; then
+			if [[ $(echo ${stdin[$idx]} | grep -F "$searchtext") ]]; then
 				let 'count+=1'				
 				[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
 				 echo $idx >> $filename
@@ -182,7 +182,8 @@ print_menu () {
 	filename="$index_file$index_cache_num"
 	
 	cursor_hide
-	prs '\e[H\e[J'
+	# move cursor to top of screen
+	prs '\e[H'
 	while read idx; do
 		let 'count+=1'
 		[[ "$idx" == 'done' ]] && prs '\n%b\e[0J' $clr_default && break
@@ -206,6 +207,7 @@ deselect_item () {
 	get_select_index
 	get_start_index
 	if [[ $select_menu_idx -ge 0 ]] && [[ $select_idx -ge 0 ]]; then
+		item_width=$(($(tput cols)-2))
 		cursor_hide
 		# move cursor to selected item
 		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
@@ -221,6 +223,7 @@ reselect_item () {
 	get_select_index
 	get_start_index
 	if [[ $select_menu_idx -ge 0 ]] && [[ $select_idx -ge 0 ]]; then
+		item_width=$(($(tput cols)-2))
 		cursor_hide
 		# move cursor to selected item
 		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
@@ -306,14 +309,16 @@ save_start_index
 reprint
 loop=true
 while $loop; do
-	# wait for user input	#print_search
-	read -s -N 1 </dev/tty
-	
+	# flush stdin
+	read -s -r -t.001 </dev/tty
+	# wait for user input
+	read -s -r -N 1 </dev/tty
+	# parse input
 	case $REPLY in
 	# ESC
 	($'\x1b')
 		# Grab any additional input for escape characters
-		read -s -t.0001 </dev/tty
+		read -s -r -t.001 </dev/tty
 		case $REPLY in
 		# Up arrow
 		('[A'|'OA')
@@ -323,12 +328,12 @@ while $loop; do
 				get_menu_index
 				get_start_index
 				if [[ $select_menu_idx -gt 0 ]]; then
-					deselect_item
+					max_height=$(($(tput lines)-3))
+					[[ $select_menu_idx -lt $(($start_menu_idx+1)) ]] || deselect_item
 					let 'select_menu_idx-=1'
 					save_menu_index
 					select_idx=${indexes[$select_menu_idx]}
 					save_select_index
-					max_height=$(($(tput lines)-3))
 					if [[ $select_menu_idx -lt $start_menu_idx ]]; then
 						let 'start_menu_idx-=1'
 						save_start_index
@@ -347,12 +352,12 @@ while $loop; do
 				get_menu_index
 				get_start_index
 				if [[ $select_menu_idx -lt $((${#indexes[@]}-1)) ]]; then
-					deselect_item
+					max_height=$(($(tput lines)-3))
+					[[ $select_menu_idx -gt $(($start_menu_idx+$max_height-1)) ]] || deselect_item
 					let 'select_menu_idx+=1'
 					save_menu_index
 					select_idx=${indexes[$select_menu_idx]}
 					save_select_index
-					max_height=$(($(tput lines)-3))
 					if [[ $select_menu_idx -gt $(($start_menu_idx+$max_height)) ]]; then
 						let 'start_menu_idx+=1'
 						save_start_index
@@ -365,15 +370,19 @@ while $loop; do
 		;;
 		# ESC
 		('')
-			loop=false
-			select_item=''
+			# make sure there isn't any other input
+			read -s -r -t.001 </dev/tty
+			if [[ -z $REPLY ]]; then
+				loop=false
+				select_item=''
+			fi
 		;;
 		esac
 	;;
 	# Backspace
 	($'\x7f')
 		if [[ ! -z $searchtext ]]; then 
-			searchtext=${searchtext::-1}
+			searchtext="${searchtext::-1}"
 			need_index_refresh=true
 			deselect_item
 			revert_filter
@@ -388,11 +397,13 @@ while $loop; do
 		[[ $select_idx -ge 0 ]] && select_item="${stdin[$select_idx]}"
 	;;
 	(*)
-		searchtext=$searchtext$REPLY
-		need_index_refresh=true
-		deselect_item
-		update_filter
-		reprint
+		if [[ ${#REPLY} == 1 ]]; then
+			searchtext="$searchtext$REPLY"
+			need_index_refresh=true
+			deselect_item
+			update_filter
+			reprint
+		fi
 	;;
 	esac
 	
