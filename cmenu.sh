@@ -62,6 +62,7 @@ select_menu_idx=0
 start_menu_idx=0
 select_item=''
 need_index_refresh=false
+need_deselect=false
 
 clr_select='\e[44m\e[37m'
 clr_default='\e[40m\e[37m'
@@ -84,7 +85,7 @@ filter_search () {
 		prev_filename="$index_file$(($index_cache_num-1))"
 		cache_done=false
 		if [[ -f $prev_filename ]]; then
-			while read idx; do
+			while read -rs idx; do
 				[[ "$idx" == "done" ]] && cache_done=true && break
 				filter_check
 			done < $prev_filename
@@ -139,7 +140,7 @@ filter_prev_search () {
 	rm $next_file 2> /dev/null
 	cache_done=false
 	if [[ -f $filename ]]; then
-		while read idx; do
+		while read -rs idx; do
 			[[ "$idx" == "done" ]] && cache_done=true && break
 			let 'count+=1'
 			[[ $select_idx -lt 0 ]] && select_idx=$idx
@@ -184,7 +185,7 @@ print_menu () {
 	cursor_hide
 	# move cursor to top of screen
 	prs '\e[H'
-	while read idx; do
+	while read -rs idx; do
 		let 'count+=1'
 		[[ "$idx" == 'done' ]] && prs '\n%b\e[0J' $clr_default && break
 		[[ $count -lt $start_menu_idx ]] && continue
@@ -240,7 +241,7 @@ get_indexes () {
 	if $need_index_refresh; then
 		filename="$index_file$index_cache_num"
 		indexes=()
-		while read idx; do
+		while read -rs idx; do
 			[[ "$idx" == 'done' ]] && break
 			indexes+=($idx)
 		done < $filename
@@ -250,7 +251,7 @@ get_indexes () {
 
 #TODO: the get/save functions can be consolidated to one function that takes the variable + filename as input
 get_menu_index () {
-	read select_menu_idx2 >/dev/null < $menu_file
+	read -rs select_menu_idx 2>/dev/null < $menu_file
 }
 
 save_menu_index () {
@@ -259,7 +260,7 @@ save_menu_index () {
 }
 
 get_start_index () {
-	read start_menu_idx 2>/dev/null < $start_file
+	read -rs start_menu_idx 2>/dev/null < $start_file
 }
 
 save_start_index () {
@@ -268,7 +269,7 @@ save_start_index () {
 }
 
 get_select_index () {
-	read select_idx 2>/dev/null < $select_file
+	read -rs select_idx 2>/dev/null < $select_file
 }
 
 save_select_index () {
@@ -293,8 +294,8 @@ revert_filter () {
 reprint () {
 	kill $print_proc 2>/dev/null
 	max_height=$(($(tput lines)-1))
-	prs '%b\e[\r%iB\e[K\e[H' $clr_default $max_height
-	deselect_item
+	cursor_hide && prs '%b\e[\r%iB\e[K\e[H' $clr_default $max_height
+	$need_deselect && deselect_item && need_deselect=false
 	queue_print &
 	print_proc=$!
 }
@@ -339,10 +340,10 @@ reprint
 loop=true
 while $loop; do
 	# wait for user input
-	read -s -N 1 key  </dev/tty
+	read -rs -N 1 key  </dev/tty
 	# get additional input for escape characters
-	while read -s -t0 </dev/tty; do
-		read -s -N 1 </dev/tty
+	while read -rs -t0 </dev/tty; do
+		read -rs -N 1 </dev/tty
 		key=$key$REPLY
 	done
 	# parse input
@@ -405,6 +406,7 @@ while $loop; do
 		if [[ ! -z $searchtext ]]; then 
 			searchtext="${searchtext::-1}"
 			need_index_refresh=true
+			need_deselect=true
 			revert_filter
 			reprint
 		fi
@@ -420,6 +422,7 @@ while $loop; do
 		if [[ ! -z $key ]] && [[ ${#key} == 1 ]]; then
 			searchtext="$searchtext$key"
 			need_index_refresh=true
+			need_deselect=true
 			update_filter
 			reprint
 		fi
