@@ -1,5 +1,45 @@
 #!/bin/bash
 
+prompt=':'
+
+#TODO: read ARGS for special options
+# -p  set custom prompt
+# -i  use case-insensitive filtering
+# -c  set highlight color (possibly?)
+# -l  set max menu rows to display on screen
+# -s  display menu in-line instead of clearing terminal screen first
+
+arg_flag=''
+for arg in "$@";
+do
+	if [[ ! -z $arg_flag ]]; then
+		case "$arg_flag" in
+		('-p')
+			prompt="$arg"
+		;;
+		(*)
+			echo "Could not parse argument $arg_flag"
+			exit 1
+		;;
+		esac
+
+		arg_flag=''
+		continue
+	fi
+
+	case "$arg" in
+	('-p')
+		arg_flag=$arg
+	;;
+	(*)
+		echo "Could not parse argument $arg"
+		exit 1
+	;;
+	esac
+done
+
+[[ ! -z $arg_flag ]] && echo "Could not parse argument $arg_flag" && exit 1
+
 prs () { printf $@ > /dev/tty ; }       # prevent printing from being piped to another program
 cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
@@ -38,13 +78,6 @@ if test ! -t 0; then
 	echo "done" >> $filename
 fi
 
-#TODO: read ARGS for special options
-# -p  set custom prompt
-# -i  use case-insensitive filtering
-# -c  set highlight color (possibly?)
-# -l  set max menu rows to display on screen
-# -s  display menu in-line instead of clearing terminal screen first
-
 original_indexes=( ${indexes[@]} )
 
 #TODO: move useful cursor commands to functions or variables so I don't have to keep looking them up
@@ -55,7 +88,6 @@ prs '\e[H\e[J' # move cursor to top of screen and clear it
 
 IFS=''
 searchtext=''  # user-typed filter
-prompt=':'
 
 select_idx=0
 select_menu_idx=0
@@ -201,7 +233,9 @@ print_menu () {
 print_search () {
 	cursor_hide
 	search_width=$(($(tput cols)-${#prompt}))
-	prs '%b\e[H\r%s\e[K' $clr_default $(echo "$prompt$searchtext" | cut -c 1-$search_width)
+	search_overflow=$((${#searchtext}-$search_width+1))
+	[[ $search_overflow -lt 0 ]] && search_overflow=0
+	prs '%b\e[H\r%s%s\e[K' $clr_default $prompt $(echo "${searchtext:$search_overflow}" | cut -c 1-$search_width)
 	cursor_show
 }
 
@@ -442,5 +476,6 @@ rm -rf $cache_to_delete_dir* &
 
 # restore previous contents of terminal if possible, otherwise clear screen
 tput rmcup || prs '\e[H\e[J'
+
 # print the results to stdout
 echo "$select_item"
