@@ -232,10 +232,11 @@ print_menu () {
 
 print_search () {
 	cursor_hide
-	search_width=$(($(tput cols)-${#prompt}))
-	search_overflow=$((${#searchtext}-$search_width+1))
+	search_width=$(tput cols)
+	search_field=$prompt$searchtext
+	search_overflow=$((${#search_field}-$search_width+1))
 	[[ $search_overflow -lt 0 ]] && search_overflow=0
-	prs '%b\e[H\r%s%s\e[K' $clr_default $prompt $(echo "${searchtext:$search_overflow}" | cut -c 1-$search_width)
+	prs '%b\e[H\r%s\e[K' $clr_default $(echo "${search_field:$search_overflow}" | cut -c 1-$search_width)
 	cursor_show
 }
 
