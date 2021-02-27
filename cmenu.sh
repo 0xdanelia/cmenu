@@ -3,7 +3,7 @@
 IFS=''                     # do not ignore whitespace on input
 searchtext=''              # user-typed filter
 prompt=': '                # text at top of screen before the search filter
-clr_select='\e[30;47m'     # black text with white highlight
+clr_select='\e[0;30;47m'   # black text with white highlight
 clr_default='\e[0m'        # default colors
 
 prs () { printf $@ > /dev/tty ; }       # prevent printing from being piped to another program
@@ -27,7 +27,6 @@ do
 			exit 1
 		;;
 		esac
-
 		arg_flag=''
 		continue
 	fi
@@ -37,10 +36,10 @@ do
 		arg_flag=$arg
 	;;
 	('-c1'|'-c2'|'-c3'|'-c4')  # preset custom highlight colors
-		[[ "$arg" == "-c1" ]] && clr_select='\e[44;37m'  # white on blue
-		[[ "$arg" == "-c2" ]] && clr_select='\e[34;42m'  # blue on green
-		[[ "$arg" == "-c3" ]] && clr_select='\e[30;43m'  # black on yellow
-		[[ "$arg" == "-c4" ]] && clr_select='\e[37;41m'  # white on red
+		[[ "$arg" == "-c1" ]] && clr_select='\e[0;44;37m'  # white on blue
+		[[ "$arg" == "-c2" ]] && clr_select='\e[0;34;42m'  # blue on green
+		[[ "$arg" == "-c3" ]] && clr_select='\e[0;30;43m'  # black on yellow
+		[[ "$arg" == "-c4" ]] && clr_select='\e[0;37;41m'  # white on red
 	;;
 	('-i')
 		filter_func () { grep -F -i "$searchtext" ;}
@@ -285,12 +284,12 @@ print_search () {
 	cursor_show
 }
 
-#TODO: deselect and reselect can be merged to one function
-# remove highlighting from selected item
-deselect_item () {
+# add or remove highlighting from selected item
+highlight_selected () {
 	get_menu_index
 	get_select_index
 	get_start_index
+	wait $print_proc
 	if [[ $select_menu_idx -ge 0 ]] && [[ $select_idx -ge 0 ]]; then
 		item_width=$(($(tput cols)-2))
 		cursor_hide
@@ -298,31 +297,15 @@ deselect_item () {
 		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
 		# reprint selected item with default color
 		item="${stdin[$select_idx]}"
-		item=$(echo -e "$item" | sed "s/\x1b\[0m/\x1b${clr_default:2}/g")
-		prs '\r%b>%b %s\e[0K' $clr_select $clr_default ${item::$item_width}
+		item=$(echo -e "$item" | sed "s/\x1b\[0m/\x1b${1:2}/g")
+		prs '\r%b>%b %s\e[0K' $clr_select $1 ${item::$item_width}
 	fi
 	# return cursor to search text
 	print_search
 }
 
-# highlight the selected item
-reselect_item () {
-	get_menu_index
-	get_select_index
-	get_start_index
-	if [[ $select_menu_idx -ge 0 ]] && [[ $select_idx -ge 0 ]]; then
-		item_width=$(($(tput cols)-2))
-		cursor_hide
-		# move cursor to selected item
-		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
-		# reprint selected item with default color
-		item="${stdin[$select_idx]}"
-		item=$(echo -e "$item" | sed "s/\x1b\[0m/\x1b${clr_select:2}/g")
-		prs '\r%b> %s\e[0K' $clr_select ${item::$item_width}
-	fi
-	# return cursor to search text
-	print_search
-}
+deselect_item () { highlight_selected $clr_default; }
+reselect_item () { highlight_selected $clr_select; }
 
 # get the indexes of all currently filtered items
 get_indexes () {
@@ -337,33 +320,23 @@ get_indexes () {
 	fi
 }
 
-#TODO: the get/save functions can be consolidated to one function that takes the variable + filename as input
-get_menu_index () {
-	read -rs select_menu_idx 2>/dev/null < $menu_file
+# cache management functions
+read_cache () {
+	read -rs $1 2>/dev/null < $2
+}
+save_cache() {
+	rm $2 2>/dev/null
+	echo "$1" > $2
 }
 
-save_menu_index () {
-	rm $menu_file 2>/dev/null
-	echo "$select_menu_idx" > $menu_file
-}
+get_menu_index () { read_cache select_menu_idx $menu_file; }
+save_menu_index () { save_cache $select_menu_idx $menu_file; }
 
-get_start_index () {
-	read -rs start_menu_idx 2>/dev/null < $start_file
-}
+get_start_index () { read_cache start_menu_idx $start_file; }
+save_start_index () { save_cache $start_menu_idx $start_file; }
 
-save_start_index () {
-	rm $start_file 2>/dev/null
-	echo "$start_menu_idx" > $start_file
-}
-
-get_select_index () {
-	read -rs select_idx 2>/dev/null < $select_file
-}
-
-save_select_index () {
-	rm $select_file 2>/dev/null
-	echo "$select_idx" > $select_file
-}
+get_select_index () { read_cache select_idx $select_file; }
+save_select_index () { save_cache $select_idx $select_file; }
 
 # kill background filtering shell and start new one
 update_filter () {
@@ -373,7 +346,7 @@ update_filter () {
 	filter_proc=$!
 }
 
-# kill background filtering shell and start new one, but different
+# kill background filtering shell and start new one, but after a backspace
 revert_filter () {
 	let 'index_cache_num-=1'
 	kill $filter_proc 2>/dev/null
@@ -450,7 +423,6 @@ while $loop; do
 	done
 	# parse input
 	case $key in
-	#TODO: up and down arrow can probably be merged into one function
 	# Up arrow
 	($'\x1b[A'|$'\x1bOA')
 		# don't do anything if filtering is in progress
@@ -474,7 +446,6 @@ while $loop; do
 					reprint
 				else
 					# if not scrolling, just re-apply highlighting
-					wait $print_proc
 					reselect_item
 				fi
 			fi
@@ -507,7 +478,6 @@ while $loop; do
 					reprint
 				else
 					# if not scrolling, just re-apply highlighting
-					wait $print_proc
 					reselect_item
 				fi
 			fi
