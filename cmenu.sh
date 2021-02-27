@@ -1,78 +1,14 @@
 #!/bin/bash
 
-IFS=''                     # do not ignore whitespace on input
-searchtext=''              # user-typed filter
-prompt=': '                # text at top of screen before the search filter
-clr_select='\e[0;30;47m'   # black text with white highlight
-clr_default='\e[0m'        # default colors
-
-prs () { printf $@ > /dev/tty ; }       # prevent printing from being piped to another program
+# Functions
+prs () { printf $@ > /dev/tty ; }          # prevent printing from being piped to another program
+filter_func () { grep -F "$searchtext" ;}  # the function applied to input to filter out results
 cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
-filter_func () { grep -F "$searchtext" ;}
-
-arg_flag=''
-for arg in "$@";
-do
-	if [[ ! -z $arg_flag ]]; then
-		case "$arg_flag" in
-		('-p')  # set prompt text
-			prompt="$arg"
-		;;
-		('-c')  # set highlight color (using ANSI escape codes)
-			clr_select="$arg"
-		;;
-		(*)
-			echo "Could not parse argument $arg_flag"
-			exit 1
-		;;
-		esac
-		arg_flag=''
-		continue
-	fi
-
-	case "$arg" in
-	('-p'|'-c')
-		arg_flag=$arg
-	;;
-	('-c1'|'-c2'|'-c3'|'-c4')  # preset custom highlight colors
-		[[ "$arg" == "-c1" ]] && clr_select='\e[0;44;37m'  # white on blue
-		[[ "$arg" == "-c2" ]] && clr_select='\e[0;34;42m'  # blue on green
-		[[ "$arg" == "-c3" ]] && clr_select='\e[0;30;43m'  # black on yellow
-		[[ "$arg" == "-c4" ]] && clr_select='\e[0;37;41m'  # white on red
-	;;
-	('-i')
-		filter_func () { grep -F -i "$searchtext" ;}
-	;;
-	(*)
-		echo "Could not parse argument $arg"
-		exit 1
-	;;
-	esac
-done
-
-[[ ! -z $arg_flag ]] && echo "Could not parse argument $arg_flag" && exit 1
-
-# directory to store files so the $filter_proc and $print_proc background shells can communicate
-cache_dir=~/.cache/cmenu/active_
-# use a unique identifier for this cache so other instances of cmenu do not conflict
-cache_ID=$$$(date +%s%N) # process id + seconds + nanoseconds
-while [[ -e $cache_dir$cache_ID ]]; do
-	cache_ID=$$$(date +%s%N)
-done
-cache_dir=$cache_dir$cache_ID
-mkdir -p $cache_dir
-# cache files
-index_file="$cache_dir/cmenu_indexes"  # combine with the hash of $searchtext to keep track of filtered indexes
-select_file="$cache_dir/cmenu_select"  # holds the index of the selected item
-menu_file="$cache_dir/cmenu_menu"      # holds the on-screen index of the selected item
-start_file="$cache_dir/cmenu_start"    # holds the index of the first item printed on screen
-
-# hash the searchtext to get a unique filename that guarantees no illegal filename characters (like '/')
-get_index_file_hash () { md5sum <<< "$searchtext" | sed 's/  -//g'; }
+get_index_file_hash () { md5sum <<< "$searchtext" | sed 's/  -//g'; } # create a unique but reusable file id
 get_prev_index_hash () { md5sum <<< "${searchtext::-1}" | sed 's/  -//g'; }
 
-# replace tabs with the appropriate number of spaces
+# replace tabs with the appropriate number of spaces while reading stdin
 clean_input () {
 	result=''
 	tabs='    '
@@ -94,43 +30,6 @@ clean_input () {
 	inline=$result
 }
 
-# read piped input
-stdin=()       # strings of input text for displaying
-stdin_orig=()  # unaltered input text for outputting
-indexes=()  # indexes of menu items  #TODO: since indexes are read from files, do we need this variable?
-if test ! -t 0; then
-	hash=$(get_index_file_hash)
-	filename="$index_file$hash"
-	rm $filename 2>/dev/null
-	count=0
-	while read -rs inline; do
-		stdin_orig+=($inline)
-		clean_input
-		stdin+=($inline)
-		indexes+=($count)
-		echo "$count" >> $filename
-		let 'count+=1'
-	done
-	echo "done" >> $filename
-fi
-
-original_indexes=( ${indexes[@]} )
-
-# Set up the screen
-tput smcup     # save current contents of terminal
-prs '\e[H\e[J' # move cursor to top of screen and clear it
-
-# important indexes
-select_idx=0        # index of selected item in stdin
-select_menu_idx=0   # index of selected item on screen
-start_menu_idx=0    # index of item in stdin that is first to print on screen
-select_item=''      # value of selected item
-need_index_refresh=false  # is our indexes() array up to date or not
-need_deselect=false       # do we need to remove the highlight from screen
-
-filter_proc=  # pid of background shell that is running the filter
-print_proc=   # pid of background shell that is printing the menu on screen
-
 # see if the item matches on the search text
 filter_check () {
 	if [[ $(echo ${stdin_orig[$idx]} | filter_func) ]]; then
@@ -139,6 +38,7 @@ filter_check () {
 	fi
 }
 
+# do some stuff once you've got yourself a filtered item
 handle_filtered_item () {
 	let 'count+=1'
 	# if filter removes the previously selected item from list, select the next available item instead
@@ -254,6 +154,8 @@ print_search () {
 }
 
 # add or remove highlighting from selected item
+deselect_item () { highlight_selected $clr_default; }
+reselect_item () { highlight_selected $clr_select; }
 highlight_selected () {
 	get_menu_index
 	get_select_index
@@ -273,9 +175,6 @@ highlight_selected () {
 	print_search
 }
 
-deselect_item () { highlight_selected $clr_default; }
-reselect_item () { highlight_selected $clr_select; }
-
 # get the indexes of all currently filtered items
 get_indexes () {
 	if $need_index_refresh; then
@@ -291,13 +190,8 @@ get_indexes () {
 }
 
 # cache management functions
-read_cache () {
-	read -rs $1 2>/dev/null < $2
-}
-save_cache() {
-	rm $2 2>/dev/null
-	echo "$1" > $2
-}
+read_cache () { read -rs $1 2>/dev/null < $2; }
+save_cache() { rm $2 2>/dev/null; echo "$1" > $2; }
 
 get_menu_index () { read_cache select_menu_idx $menu_file; }
 save_menu_index () { save_cache $select_menu_idx $menu_file; }
@@ -367,6 +261,117 @@ queue_print () {
 	# once filtering is done we can finally print the menu
 	print_menu
 }
+
+##########################
+### Script Starts Here ###
+##########################
+
+# Initial setup
+IFS=''                     # do not ignore whitespace on input
+searchtext=''              # user-typed filter
+prompt=': '                # text at top of screen before the search filter
+clr_select='\e[0;30;47m'   # black text with white highlight
+clr_default='\e[0m'        # default colors
+
+# read command line arguments
+arg_flag=''
+for arg in "$@";
+do
+	# if a flag was set, set a value based on the nxt argument
+	if [[ ! -z $arg_flag ]]; then
+		case "$arg_flag" in
+		('-p')  
+			# set prompt text
+			prompt="$arg"
+		;;
+		('-c')  
+			# set highlight color (using ANSI escape codes)
+			clr_select="$arg"
+		;;
+		(*)
+			echo "Could not parse argument $arg_flag"
+			exit 1
+		;;
+		esac
+		arg_flag=''
+		continue
+	fi
+	# if the previous argument was not a flag, handle it here
+	case "$arg" in
+	('-p'|'-c')
+		# these are flags and require the next argument to be processed
+		arg_flag=$arg
+	;;
+	('-c1'|'-c2'|'-c3'|'-c4')  
+		# preset custom highlight colors
+		[[ "$arg" == "-c1" ]] && clr_select='\e[0;44;37m'  # white on blue
+		[[ "$arg" == "-c2" ]] && clr_select='\e[0;34;42m'  # blue on green
+		[[ "$arg" == "-c3" ]] && clr_select='\e[0;30;43m'  # black on yellow
+		[[ "$arg" == "-c4" ]] && clr_select='\e[0;37;41m'  # white on red
+	;;
+	('-i')
+		# use case-insensitive filtering
+		filter_func () { grep -F -i "$searchtext" ;}
+	;;
+	(*)
+		# if the argument wasn't handled by now, it isn't a valid argument
+		echo "Could not parse argument $arg"
+		exit 1
+	;;
+	esac
+done
+# if a flag was set but not handled, then it isn't a valid argument
+[[ ! -z $arg_flag ]] && echo "Argument $arg_flag requires an additional value" && exit 1
+
+# directory to store files so the $filter_proc and $print_proc background shells can communicate
+cache_dir=~/.cache/cmenu/active_
+# use a unique identifier for this cache so other instances of cmenu do not conflict
+cache_ID=$$$(date +%s%N) # process id + seconds + nanoseconds
+while [[ -e $cache_dir$cache_ID ]]; do
+	cache_ID=$$$(date +%s%N)
+done
+cache_dir=$cache_dir$cache_ID
+mkdir -p $cache_dir
+# cache files
+index_file="$cache_dir/cmenu_indexes"  # combine with the hash of $searchtext to keep track of filtered indexes
+select_file="$cache_dir/cmenu_select"  # holds the index of the selected item
+menu_file="$cache_dir/cmenu_menu"      # holds the on-screen index of the selected item
+start_file="$cache_dir/cmenu_start"    # holds the index of the first item printed on screen
+# important indexes and other values
+select_idx=0        # index of selected item in stdin
+select_menu_idx=0   # index of selected item on screen
+start_menu_idx=0    # index of item in stdin that is first to print on screen
+select_item=''      # value of selected item
+need_index_refresh=false  # is our indexes() array up to date or not
+need_deselect=false       # do we need to remove the highlight from screen
+filter_proc=              # pid of background shell that is running the filter
+print_proc=               # pid of background shell that is printing the menu on screen
+
+# Set up the screen
+tput smcup     # save current contents of terminal
+prs '\e[H\e[J' # move cursor to top of screen and clear it
+
+# read piped input
+stdin=()       # strings of input text for displaying
+stdin_orig=()  # unaltered input text for outputting
+indexes=()     # indexes of menu items
+if test ! -t 0; then
+	hash=$(get_index_file_hash)
+	filename="$index_file$hash"
+	rm $filename 2>/dev/null
+	count=0
+	while read -rs inline; do
+		stdin_orig+=($inline)
+		clean_input
+		stdin+=($inline)
+		indexes+=($count)
+		echo "$count" >> $filename
+		let 'count+=1'
+	done
+	echo "done" >> $filename
+fi
+# keep unfiltered indexes in memory
+original_indexes=( ${indexes[@]} )
 
 # Main():
 save_select_index
@@ -451,7 +456,7 @@ while $loop; do
 		select_item=''
 	;;
 	# Backspace
-	($'\x7f'|'\b')
+	($'\x7f'|$'\b')
 		# only backspace if there is something to backspace
 		if [[ ! -z $searchtext ]]; then 
 			searchtext="${searchtext::-1}"
