@@ -1,8 +1,11 @@
 #!/bin/bash
 
-prompt=':'
-clr_select='\e[44m\e[37m' # white text with blue highlight
-clr_default='\e[0m\e[0m'
+IFS=''                     # do not ignore whitespace on input
+searchtext=''              # user-typed filter
+prompt=': '                # text at top of screen before the search filter
+clr_select='\e[30;47m'     # black text with white highlight
+clr_default='\e[0m'        # default colors
+
 filter_func () { grep -F "$searchtext" ;}
 
 #TODO: special args to add:
@@ -35,10 +38,10 @@ do
 		arg_flag=$arg
 	;;
 	('-c1'|'-c2'|'-c3'|'-c4')  # preset custom highlight colors
-		[[ "$arg" == "-c1" ]] && clr_select='\e[30m\e[47m'  # black on white
-		[[ "$arg" == "-c2" ]] && clr_select='\e[34m\e[42m'  # blue on green
-		[[ "$arg" == "-c3" ]] && clr_select='\e[30m\e[43m'  # black on yellow
-		[[ "$arg" == "-c4" ]] && clr_select='\e[37m\e[41m'  # white on red 
+		[[ "$arg" == "-c1" ]] && clr_select='\e[44;37m'  # white on blue
+		[[ "$arg" == "-c2" ]] && clr_select='\e[34;42m'  # blue on green
+		[[ "$arg" == "-c3" ]] && clr_select='\e[30;43m'  # black on yellow
+		[[ "$arg" == "-c4" ]] && clr_select='\e[37;41m'  # white on red
 	;;
 	('-i')
 		filter_func () { grep -F -i "$searchtext" ;}
@@ -74,7 +77,30 @@ select_file="$cache_dir/cmenu_select"  # holds the index of the selected item
 menu_file="$cache_dir/cmenu_menu"      # holds the on-screen index of the selected item
 start_file="$cache_dir/cmenu_start"    # holds the index of the first item printed on screen
 
-stdin=()    # strings of input text
+# replace tabs with the appropriate number of spaces
+clean_input () {
+	result=''
+	tabs='    '
+	for ((i=0; i<${#inline}; i++)); do
+		c=${inline:$i:1}
+		case $c in
+		# tab
+		($'\t')
+			result=$result$tabs
+			tabs=''
+		;;
+		(*)
+			result=$result$c
+			tabs=${tabs::-1}
+		;;
+		esac
+		[[ $tabs == '' ]] && tabs='    '
+	done
+	inline=$result
+}
+
+stdin=()       # strings of input text for displaying
+stdin_orig=()  # unaltered input text for outputting
 indexes=()  # indexes of menu items  #TODO: since indexes are read from files, do we need this variable?
 # read piped input
 if test ! -t 0; then
@@ -82,7 +108,9 @@ if test ! -t 0; then
 	rm $filename 2>/dev/null
 	count=0
 	while read -rs inline; do
-		stdin+=("$inline")
+		stdin_orig+=($inline)
+		clean_input
+		stdin+=($inline)
 		indexes+=($count)
 		echo "$count" >> $filename
 		let 'count+=1'
@@ -97,9 +125,6 @@ original_indexes=( ${indexes[@]} )
 #prs '\e[?47h'  # save screen
 tput smcup     # save current contents of terminal
 prs '\e[H\e[J' # move cursor to top of screen and clear it
-
-IFS=''
-searchtext=''  # user-typed filter
 
 select_idx=0
 select_menu_idx=0
@@ -231,7 +256,9 @@ print_menu () {
 		[[ "$idx" == 'done' ]] && prs '\n%b\e[0J' $clr_default && break
 		[[ $count -lt $start_menu_idx ]] && continue
 		[[ $count == $select_menu_idx ]] && clr_line=$clr_select || clr_line=$clr_default
-		prs '\n%b>%b %s\e[K' $clr_select $clr_line $(echo "${stdin[$idx]}" | cut -c 1-$item_width)
+		item="${stdin[$idx]}"
+		item=$(echo -e "$item" | sed "s/\x1b\[0m/\x1b${clr_line:2}/g")
+		prs '\n%b>%b %s\e[K' $clr_select $clr_line ${item::$item_width}
 		[[ $(($count-$start_menu_idx+2)) == $(($max_height)) ]] && break
 	done < $filename
 	# clear the progress bar
@@ -259,7 +286,9 @@ deselect_item () {
 		# move cursor to selected item
 		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
 		# reprint selected item with default color
-		prs '\r%b>%b %s\e[0K' $clr_select $clr_default $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
+		item="${stdin[$select_idx]}"
+		item=$(echo -e "$item" | sed "s/\x1b\[0m/\x1b${clr_default:2}/g")
+		prs '\r%b>%b %s\e[0K' $clr_select $clr_default ${item::$item_width}
 	fi
 	# return cursor to search text
 	print_search
@@ -275,7 +304,9 @@ reselect_item () {
 		# move cursor to selected item
 		prs '\e[%iB' $(($select_menu_idx-$start_menu_idx+1))
 		# reprint selected item with default color
-		prs '\r%b> %s\e[0K' $clr_select $(echo "${stdin[$select_idx]}" | cut -c 1-$item_width)
+		item="${stdin[$select_idx]}"
+		item=$(echo -e "$item" | sed "s/\x1b\[0m/\x1b${clr_select:2}/g")
+		prs '\r%b> %s\e[0K' $clr_select ${item::$item_width}
 	fi
 	# return cursor to search text
 	print_search
@@ -394,8 +425,7 @@ while $loop; do
 	case $key in
 	# Up arrow
 	($'\x1b[A'|$'\x1bOA')
-		if ! $(kill -0 $filter_proc 2>/dev/null) &&
-			! $(kill -0 $print_proc 2>/dev/null); then
+		if ! $(kill -0 $filter_proc 2>/dev/null); then
 			get_indexes
 			get_menu_index
 			get_start_index
@@ -411,6 +441,7 @@ while $loop; do
 					save_start_index
 					reprint
 				else
+					wait $print_proc
 					reselect_item
 				fi
 			fi
@@ -418,8 +449,7 @@ while $loop; do
 	;;
 	# Down arrow
 	($'\x1b[B'|$'\x1bOB')
-		if ! $(kill -0 $filter_proc 2>/dev/null) &&
-			! $(kill -0 $print_proc 2>/dev/null); then
+		if ! $(kill -0 $filter_proc 2>/dev/null); then
 			get_indexes
 			get_menu_index
 			get_start_index
@@ -435,6 +465,7 @@ while $loop; do
 					save_start_index
 					reprint
 				else
+					wait $print_proc
 					reselect_item
 				fi
 			fi
@@ -460,7 +491,7 @@ while $loop; do
 		loop=false
 		wait $filter_proc
 		get_select_index
-		[[ $select_idx -ge 0 ]] && select_item="${stdin[$select_idx]}"
+		[[ $select_idx -ge 0 ]] && select_item="${stdin_orig[$select_idx]}"
 	;;
 	(*)
 		# make sure key is not a control character
@@ -489,4 +520,4 @@ rm -rf $cache_to_delete_dir* &
 tput rmcup || prs '\e[H\e[J'
 
 # print the results to stdout
-echo "$select_item"
+echo -e "$select_item"
