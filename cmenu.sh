@@ -63,11 +63,14 @@ done
 cache_dir=$cache_dir$cache_ID
 mkdir -p $cache_dir
 # cache files
-index_cache_num=0                      # increment as the filter search string increases
-index_file="$cache_dir/cmenu_indexes"  # combine with $index_cache_num to keep track of filtered indexes
+index_file="$cache_dir/cmenu_indexes"  # combine with the hash of $searchtext to keep track of filtered indexes
 select_file="$cache_dir/cmenu_select"  # holds the index of the selected item
 menu_file="$cache_dir/cmenu_menu"      # holds the on-screen index of the selected item
 start_file="$cache_dir/cmenu_start"    # holds the index of the first item printed on screen
+
+# hash the searchtext to get a unique filename that guarantees no illegal filename characters (like '/')
+get_index_file_hash () { md5sum <<< "$searchtext" | sed 's/  -//g'; }
+get_prev_index_hash () { md5sum <<< "${searchtext::-1}" | sed 's/  -//g'; }
 
 # replace tabs with the appropriate number of spaces
 clean_input () {
@@ -96,7 +99,8 @@ stdin=()       # strings of input text for displaying
 stdin_orig=()  # unaltered input text for outputting
 indexes=()  # indexes of menu items  #TODO: since indexes are read from files, do we need this variable?
 if test ! -t 0; then
-	filename="$index_file$index_cache_num"
+	hash=$(get_index_file_hash)
+	filename="$index_file$hash"
 	rm $filename 2>/dev/null
 	count=0
 	while read -rs inline; do
@@ -127,103 +131,67 @@ need_deselect=false       # do we need to remove the highlight from screen
 filter_proc=  # pid of background shell that is running the filter
 print_proc=   # pid of background shell that is printing the menu on screen
 
-# filter stdin for values that match the search string
-filter_search () {
-	get_select_index
-	get_start_index
-	selected=false
-	prev_idx=-1
-	count=-1
-	max_height=$(($(tput lines)-1))
-	filename="$index_file$index_cache_num"
-	rm $filename 2> /dev/null
-
-	# filter on top of the previously filtered indexes, if possible
-	if [[ $index_cache_num -gt 0 ]]; then
-		# read from previous cache of indexes
-		prev_filename="$index_file$(($index_cache_num-1))"
-		cache_done=false
-		if [[ -f $prev_filename ]]; then
-			while read -rs idx; do
-				[[ "$idx" == "done" ]] && cache_done=true && break
-				filter_check
-			done < $prev_filename
-		fi
-		# if the previous filter did not finish, continue using stdin
-		if ! $cache_done; then
-			for (( idx=$(($prev_idx+1)); idx<${#original_indexes[@]}; idx++ )); do
-				filter_check
-			done
-		fi
-	else
-		# no previous cache so read from original stdin
-		for idx in ${original_indexes[@]}; do
-			filter_check
-		done
-	fi
-	# used to indicate that the filter finished and was not interrupted
-	echo 'done' >> $filename
-	# if filter shrinks list past selected item, select the last item
-	! $selected && select_idx=$prev_idx && select_menu_idx=$count
-	# make sure newly filtered items print on screen
-	[[ $select_menu_idx -le $max_height ]] && start_menu_idx=0 ||
-	start_menu_idx=$(($select_menu_idx-$max_height+2))
-	# store indexes in cache
-	save_menu_index
-	save_select_index
-	save_start_index
-}
-
 # see if the item matches on the search text
 filter_check () {
 	if [[ $(echo ${stdin_orig[$idx]} | filter_func) ]]; then
-		let 'count+=1'
-		# if filter removes the previously selected item from list, select the next available item instead
-		! $selected && [[ $idx -gt $select_idx ]] && select_idx=$idx
-		# set some values if the selected item is matched
-		[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
-		 echo $idx >> $filename
-		 prev_idx=$idx
+		handle_filtered_item
+		echo $idx >> $filename
 	fi
 }
 
+handle_filtered_item () {
+	let 'count+=1'
+	# if filter removes the previously selected item from list, select the next available item instead
+	! $selected && [[ $idx -gt $select_idx ]] && select_idx=$idx
+	# set some values if the selected item is matched
+	[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
+	 prev_idx=$idx
+}
+
 # filtering after a backspace, which means the new filter string results have already been cached
-filter_prev_search () {
+filter_search () {
 	get_select_index
 	count=-1
 	prev_idx=-1
 	selected=false
 	max_height=$(($(tput lines)-1))
-	filename="$index_file$index_cache_num"
-	next_file="$index_file$(($index_cache_num+1))"
-	rm $next_file 2> /dev/null
+	hash=$(get_index_file_hash)
+	filename="$index_file$hash"
 	cache_done=false
 	# the previously filtered indexes don't require re-filtering
 	if [[ -f $filename ]]; then
 		while read -rs idx; do
 			[[ "$idx" == "done" ]] && cache_done=true && break
-			let 'count+=1'
-			[[ $select_idx -lt 0 ]] && select_idx=$idx
-			[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
-			prev_idx=$idx
+			handle_filtered_item
 		done < $filename
+	else
+	# if this filter hasn't been cached, build off of the previous filter
+		if [[ ! -z $searchtext ]]; then
+			# read from previous cache of indexes
+			prev_hash=$(get_prev_index_hash)
+			prev_filename="$index_file$prev_hash"
+			if [[ -f $prev_filename ]]; then
+				while read -rs idx; do
+					[[ "$idx" == "done" ]] && cache_done=true && break
+					filter_check
+				done < $prev_filename
+				$cache_done && echo 'done' >> $filename
+			fi
+		fi
 	fi
 	# if the filter was previously interrupted, finish filtering on original input
 	if ! $cache_done; then
 		for (( idx=$(($prev_idx+1)); idx<${#original_indexes[@]}; idx++ )); do
-			if [[ $(echo ${stdin_orig[$idx]} | filter_func) ]]; then
-				let 'count+=1'				
-				[[ $idx == $select_idx ]] && select_menu_idx=$count && selected=true
-				 echo $idx >> $filename
-				 prev_idx=$idx
-			fi
+			filter_check
 		done
 		echo 'done' >> $filename
-		# if filter shrinks list past selected item, select the first item
-		! $selected && select_idx=$prev_idx && select_menu_idx=$count
-		# if the filter results in no valid items, set the indexes to defaults
-		[[ $count -lt 0 ]] && select_idx=-1 && select_menu_idx=-1
 	fi
+	
+	# if filter shrinks list past selected item, select the first item
+	! $selected && select_idx=$prev_idx && select_menu_idx=$count
+	# if the filter results in no valid items, set the indexes to defaults
+	[[ $count -lt 0 ]] && select_idx=-1 && select_menu_idx=-1
+	
 	# make sure newly filtered items print on screen
 	[[ $select_menu_idx -le $max_height ]] && start_menu_idx=0 ||
 	start_menu_idx=$(($select_menu_idx-$max_height+2))
@@ -241,7 +209,8 @@ print_menu () {
 	count=-1
 	item_width=$(($(tput cols)-2))
 	max_height=$(($(tput lines)-1))
-	filename="$index_file$index_cache_num"
+	hash=$(get_index_file_hash)
+	filename="$index_file$hash"
 	cursor_hide
 	# move cursor to top of screen
 	prs '\e[H'
@@ -310,7 +279,8 @@ reselect_item () { highlight_selected $clr_select; }
 # get the indexes of all currently filtered items
 get_indexes () {
 	if $need_index_refresh; then
-		filename="$index_file$index_cache_num"
+		hash=$(get_index_file_hash)
+		filename="$index_file$hash"
 		indexes=()
 		while read -rs idx; do
 			[[ "$idx" == 'done' ]] && break
@@ -340,17 +310,8 @@ save_select_index () { save_cache $select_idx $select_file; }
 
 # kill background filtering shell and start new one
 update_filter () {
-	let 'index_cache_num+=1'
 	kill $filter_proc 2>/dev/null
 	filter_search &
-	filter_proc=$!
-}
-
-# kill background filtering shell and start new one, but after a backspace
-revert_filter () {
-	let 'index_cache_num-=1'
-	kill $filter_proc 2>/dev/null
-	filter_prev_search &
 	filter_proc=$!
 }
 
@@ -496,7 +457,7 @@ while $loop; do
 			searchtext="${searchtext::-1}"
 			need_index_refresh=true
 			need_deselect=true
-			revert_filter
+			update_filter
 			reprint
 		fi
 	;;
