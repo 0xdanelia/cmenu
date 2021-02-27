@@ -500,6 +500,10 @@ while $loop; do
 				if [[ $select_menu_idx -gt $(($start_menu_idx+$max_height)) ]]; then
 					let 'start_menu_idx+=1'
 					save_start_index
+					# since menu prints top-down, update the bottom selected item first so we can see it
+					kill $print_proc 2>/dev/null
+					prs '\e[H'
+					reselect_item
 					reprint
 				else
 					# if not scrolling, just re-apply highlighting
