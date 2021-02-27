@@ -5,8 +5,15 @@ prs () { printf $@ > /dev/tty ; }          # prevent printing from being piped t
 filter_func () { grep -F "$searchtext" ;}  # the function applied to input to filter out results
 cursor_hide () { prs '%b' '\e[?25l'; }
 cursor_show () { prs '%b' '\e[?25h'; }
-get_index_file_hash () { md5sum <<< "$searchtext" | sed 's/  -//g'; } # create a unique but reusable file id
-get_prev_index_hash () { md5sum <<< "${searchtext::-1}" | sed 's/  -//g'; }
+
+# create a unique but reusable file id
+get_index_file_hash () { get_md5_hash "$searchtext"; } 
+get_prev_index_hash () { get_md5_hash "${searchtext::-1}"; }
+get_md5_hash () {
+	# if case-insensitive search is on, use same file for upper and lower case variants of $searchtext
+	$case_matters && tohash=$1 || tohash=$(tr '[:upper:]' '[:lower:]' <<< "$1")
+	md5sum <<< "$tohash" | sed 's/  -//g'
+}
 
 # replace tabs with the appropriate number of spaces while reading stdin
 clean_input () {
@@ -269,6 +276,7 @@ queue_print () {
 # Initial setup
 IFS=''                     # do not ignore whitespace on input
 searchtext=''              # user-typed filter
+case_matters=true          # is filtering case sensitive or not
 prompt=': '                # text at top of screen before the search filter
 clr_select='\e[0;30;47m'   # black text with white highlight
 clr_default='\e[0m'        # default colors
@@ -312,6 +320,7 @@ do
 	('-i')
 		# use case-insensitive filtering
 		filter_func () { grep -F -i "$searchtext" ;}
+		case_matters=false
 	;;
 	(*)
 		# if the argument wasn't handled by now, it isn't a valid argument
@@ -350,6 +359,8 @@ print_proc=               # pid of background shell that is printing the menu on
 # Set up the screen
 tput smcup     # save current contents of terminal
 prs '\e[H\e[J' # move cursor to top of screen and clear it
+# print the search bar while the input loads
+print_search
 
 # read piped input
 stdin=()       # strings of input text for displaying
@@ -378,6 +389,7 @@ save_select_index
 save_menu_index
 save_start_index
 reprint
+wait $print_proc
 loop=true
 while $loop; do
 	# wait for user input
