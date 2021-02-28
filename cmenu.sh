@@ -270,6 +270,17 @@ queue_print () {
 	print_menu
 }
 
+# do some housekeeping when the script exits
+cleanup () {
+	# kill any in-progress background shells
+	kill $filter_proc 2>/dev/null
+	kill $print_proc 2>/dev/null
+	# start background shell to clear old cache files
+	rm -rf $cache_dir &
+	# restore previous contents of terminal if possible, otherwise clear screen
+	tput rmcup || prs '\e[H\e[J'
+}
+
 ##########################
 ### Script Starts Here ###
 ##########################
@@ -341,7 +352,16 @@ while [[ -e $cache_dir$cache_ID ]]; do
 	cache_ID=$$$(date +%s%N)
 done
 cache_dir=$cache_dir$cache_ID
-mkdir -p $cache_dir
+
+# initialize the temporary stuff
+filter_proc=              # pid of background shell that is running the filter
+print_proc=               # pid of background shell that is printing the menu on screen
+tput smcup                # save current contents of terminal
+prs '\e[H\e[J'            # move cursor to top of screen and clear it
+mkdir -p $cache_dir       # create cache directory
+# undo the temporary stuff in case of unexpected exit
+trap "{ cleanup ; exit 1 ; }" EXIT
+
 # cache files
 index_file="$cache_dir/cmenu_indexes"  # combine with the hash of $searchtext to keep track of filtered indexes
 select_file="$cache_dir/cmenu_select"  # holds the index of the selected item
@@ -354,12 +374,7 @@ start_menu_idx=0    # index of item in stdin that is first to print on screen
 select_item=''      # value of selected item
 need_index_refresh=false  # is our indexes() array up to date or not
 need_deselect=false       # do we need to remove the highlight from screen
-filter_proc=              # pid of background shell that is running the filter
-print_proc=               # pid of background shell that is printing the menu on screen
 
-# Set up the screen
-tput smcup     # save current contents of terminal
-prs '\e[H\e[J' # move cursor to top of screen and clear it
 # print the search bar while the input loads
 print_search
 
@@ -505,17 +520,8 @@ while $loop; do
 	esac
 done
 
-# kill any in-progress background shells
-kill $filter_proc 2>/dev/null
-kill $print_proc 2>/dev/null
+# housekeeping
+cleanup
 
-# start background shell to clear old cache files
-rm -rf $cache_dir &
-
-#TODO: catch CTRL+C (and other kill commands) and make sure my background shells are stopped
-
-# restore previous contents of terminal if possible, otherwise clear screen
-tput rmcup || prs '\e[H\e[J'
-
-# print the results to stdout
+# print the final results to stdout
 echo -e "$select_item"
