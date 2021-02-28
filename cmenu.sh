@@ -359,8 +359,9 @@ print_proc=               # pid of background shell that is printing the menu on
 tput smcup                # save current contents of terminal
 prs '\e[H\e[J'            # move cursor to top of screen and clear it
 mkdir -p $cache_dir       # create cache directory
-# undo the temporary stuff in case of unexpected exit
-trap "{ cleanup ; exit 1 ; }" EXIT
+
+# undo the temporary stuff and print results on ctrl+c
+trap "{ cleanup ; exit 1 ; }" 2
 
 # cache files
 index_file="$cache_dir/cmenu_indexes"  # combine with the hash of $searchtext to keep track of filtered indexes
@@ -520,8 +521,7 @@ while $loop; do
 	esac
 done
 
-# housekeeping
+# kill background shells, delete cache, restore screen
 cleanup
-
 # print the final results to stdout
 echo -e "$select_item"
