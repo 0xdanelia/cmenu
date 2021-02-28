@@ -12,6 +12,17 @@ Pressing enter will select the highlighted menu item and print the contents to s
 
 This output can be piped into other programs or captured as a variable in a script to be parsed elsewhere.
 
+### Installation
+
+cmenu is just a single bash script. You could just copy/paste the raw text straight from github if you wanted to.
+
+To install cmenu in `/usr/local/bin` so you can call it from anywhere, clone the repository and run the install script:
+```
+git clone https://0xdanelia/cmenu
+cd cmenu
+./install.sh
+```
+
 ### Customization
 
 Piped input is used to build the contents of the menu. Some command line arguments can be used to customize the menu:
