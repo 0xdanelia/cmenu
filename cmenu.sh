@@ -39,7 +39,8 @@ clean_input () {
 
 # see if the item matches on the search text
 filter_check () {
-	if [[ $(echo ${stdin_orig[$idx]} | filter_func) ]]; then
+	# remove ANSI escape codes from item to only compare text characters to search string
+	if [[ $(sed 's/\(\x1b\|\\e\)\[[0-9;?=]*[a-zA-Z]//g' <<< ${stdin_orig[$idx]} | filter_func) ]]; then
 		handle_filtered_item
 		echo $idx >> $filename
 	fi
