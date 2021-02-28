@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Functions
-prs () { printf $@ > /dev/tty ; }          # prevent printing from being piped to another program
-filter_func () { grep -F "$searchtext" ;}  # the function applied to input to filter out results
-cursor_hide () { prs '%b' '\e[?25l'; }
-cursor_show () { prs '%b' '\e[?25h'; }
+prs () { printf $@ > /dev/tty ; }           # prevent printing from being piped to another program
+filter_func () { grep -F "$searchtext" ; }  # the function applied to input to filter out results
+cursor_hide () { prs '%b' '\e[?25l' ; }
+cursor_show () { prs '%b' '\e[?25h' ; }
 
 # create a unique but reusable file id
-get_index_file_hash () { get_md5_hash "$searchtext"; } 
-get_prev_index_hash () { get_md5_hash "${searchtext::-1}"; }
+get_index_file_hash () { get_md5_hash "$searchtext" ; } 
+get_prev_index_hash () { get_md5_hash "${searchtext::-1}" ; }
 get_md5_hash () {
 	# if case-insensitive search is on, use same file for upper and lower case variants of $searchtext
 	$case_matters && tohash=$1 || tohash=$(tr '[:upper:]' '[:lower:]' <<< "$1")
@@ -162,8 +162,8 @@ print_search () {
 }
 
 # add or remove highlighting from selected item
-deselect_item () { highlight_selected $clr_default; }
-reselect_item () { highlight_selected $clr_select; }
+deselect_item () { highlight_selected $clr_default ; }
+reselect_item () { highlight_selected $clr_select ; }
 highlight_selected () {
 	get_menu_index
 	get_select_index
@@ -201,14 +201,14 @@ get_indexes () {
 read_cache () { read -rs $1 2>/dev/null < $2; }
 save_cache() { rm $2 2>/dev/null; echo "$1" > $2; }
 
-get_menu_index () { read_cache select_menu_idx $menu_file; }
-save_menu_index () { save_cache $select_menu_idx $menu_file; }
+get_menu_index () { read_cache select_menu_idx $menu_file ; }
+save_menu_index () { save_cache $select_menu_idx $menu_file ; }
 
-get_start_index () { read_cache start_menu_idx $start_file; }
-save_start_index () { save_cache $start_menu_idx $start_file; }
+get_start_index () { read_cache start_menu_idx $start_file ; }
+save_start_index () { save_cache $start_menu_idx $start_file ; }
 
-get_select_index () { read_cache select_idx $select_file; }
-save_select_index () { save_cache $select_idx $select_file; }
+get_select_index () { read_cache select_idx $select_file ; }
+save_select_index () { save_cache $select_idx $select_file ; }
 
 # kill background filtering shell and start new one
 update_filter () {
@@ -278,7 +278,7 @@ cleanup () {
 	# start background shell to clear old cache files
 	rm -rf $cache_dir &
 	# restore previous contents of terminal if possible, otherwise clear screen
-	tput rmcup || prs '\e[H\e[J'
+	tput rmcup > /dev/tty || prs '\e[H\e[J'
 }
 
 ##########################
@@ -356,11 +356,11 @@ cache_dir=$cache_dir$cache_ID
 # initialize the temporary stuff
 filter_proc=              # pid of background shell that is running the filter
 print_proc=               # pid of background shell that is printing the menu on screen
-tput smcup                # save current contents of terminal
+tput smcup > /dev/tty     # save current contents of terminal
 prs '\e[H\e[J'            # move cursor to top of screen and clear it
 mkdir -p $cache_dir       # create cache directory
 
-# undo the temporary stuff and print results on ctrl+c
+# kill background shells, delete cache, and restore screen on CTRL+c
 trap "{ cleanup ; exit 1 ; }" 2
 
 # cache files
