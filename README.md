@@ -21,8 +21,11 @@ Piped input is used to build the contents of the menu. Some command line argumen
 `cmenu -p [PROMPT]`  Display "PROMPT" at the top of the menu. Default value is ":"
 
 `cmenu -c1`  Change the menu highlight colors to white text on blue background.
+
 `cmenu -c2`  Change the menu highlight colors to blue text on green background.
+
 `cmenu -c3`  Change the menu highlight colors to black text on yellow background.
+
 `cmenu -c4`  Change the menu highlight colors to white text on red background.
 
 `cmenu -c [COLOR]`  Change the menu highlight color to the ANSI code specified as "COLOR".
