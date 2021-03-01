@@ -29,7 +29,7 @@ Piped input is used to build the contents of the menu. Some command line argumen
 
 `cmenu -i`  Use case-insensitive filtering.
 
-`cmenu -p [PROMPT]`  Display "PROMPT" at the top of the menu. Default value is ":"
+`cmenu -p [PROMPT]`  Display "PROMPT" at the top of the menu. Default value is ": "
 
 `cmenu -c1`  Change the menu highlight colors to white text on blue background.
 
