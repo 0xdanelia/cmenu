@@ -1,7 +1,7 @@
 # cmenu
 Display an interactive menu and print the selected item to stdout. This is designed to be an alternative to dmenu for command line tools, or for systems that do not utilize a display manager or desktop environment. Written in bash with no external dependencies.
 
-<img src="https://i.imgur.com/JUgBHL7.gif">
+<img src="https://i.imgur.com/l1Mo7CH.gif">
 
 
 ### What it does
