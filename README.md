@@ -18,7 +18,7 @@ cmenu is just a single bash script. You could just copy/paste the raw text strai
 
 To install cmenu in `/usr/local/bin` so you can call it from anywhere, clone the repository and run the install script:
 ```
-git clone https://0xdanelia/cmenu
+git clone https://github.com/0xdanelia/cmenu
 cd cmenu
 ./install.sh
 ```
