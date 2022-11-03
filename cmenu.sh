@@ -345,7 +345,10 @@ done
 [[ ! -z $arg_flag ]] && echo "Argument $arg_flag requires an additional value" && exit 1
 
 # directory to store files so the $filter_proc and $print_proc background shells can communicate
-cache_dir=~/.cache/cmenu/active_
+cache_location=/dev/shm/cmenu
+# write the cache in /dev/shm for speed if it is available, otherwise use ~/.cache
+mkdir -p $cache_location 2>/dev/null || cache_location=~/.cache/cmenu
+cache_dir=$cache_location/active_
 # use a unique identifier for this cache so other instances of cmenu do not conflict
 cache_ID=$$$(date +%s%N) # process id + seconds + nanoseconds
 while [[ -e $cache_dir$cache_ID ]]; do
