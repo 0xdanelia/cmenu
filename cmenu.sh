@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Functions
-prs () { printf "$@" > /dev/tty ; }           # prevent printing from being piped to another program
+# shellcheck disable=SC2059
+prs () { printf "$@" > /dev/tty ; }         # prevent printing from being piped to another program
 filter_func () { grep -F "$searchtext" ; }  # the function applied to input to filter out results
 cursor_hide () { prs '%b' '\e[?25l' ; }
 cursor_show () { prs '%b' '\e[?25h' ; }
@@ -40,6 +41,7 @@ clean_input () {
 # see if the item matches on the search text
 filter_check () {
 	# remove ANSI escape codes from item to only compare text characters to search string
+	# shellcheck disable=SC2001
 	if [[ $(sed 's/\(\x1b\|\\e\)\[[0-9;?=]*[a-zA-Z]//g' <<< "${stdin_orig[$idx]}" | filter_func) ]]; then
 		handle_filtered_item
 		echo "$idx" >> "$filename"
@@ -239,7 +241,7 @@ queue_print () {
 	dot_time=0
 	dot_cycle=1
 	# check for filtering in a loop since we can't use "wait" command from the background printing shell
-	while [[ -n $filter_proc ]] && $(kill -0 $filter_proc 2>/dev/null); do
+	while [[ -n $filter_proc ]] && kill -0 $filter_proc 2>/dev/null; do
 		# let's not be too hasty
 		sleep .01
 		# print some 'in progress' dots to tell the user things are working
@@ -404,7 +406,7 @@ if test ! -t 0; then
 	echo "done" >> "$filename"
 fi
 # keep unfiltered indexes in memory
-original_indexes=( ${indexes[@]} )
+original_indexes=( "${indexes[@]}" )
 
 # Main():
 save_select_index
@@ -426,7 +428,7 @@ while $loop; do
 	# Up arrow
 	($'\x1b[A'|$'\x1bOA')
 		# don't do anything if filtering is in progress
-		if ! $(kill -0 "$filter_proc" 2>/dev/null); then
+		if ! kill -0 "$filter_proc" 2>/dev/null; then
 			get_indexes
 			get_menu_index
 			get_start_index
@@ -458,7 +460,7 @@ while $loop; do
 	# Down arrow
 	($'\x1b[B'|$'\x1bOB')
 		# don't do anything if filtering is in progress
-		if ! $(kill -0 "$filter_proc" 2>/dev/null); then
+		if ! kill -0 "$filter_proc" 2>/dev/null; then
 			get_indexes
 			get_menu_index
 			get_start_index
